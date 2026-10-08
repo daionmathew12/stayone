@@ -13,6 +13,14 @@ from app.models.tenant import SaaSPlan, Tenant
 def run_migration():
     print("=== Starting SaaS Multi-Tenant Migration ===")
     
+    # 0. Ensure core model tables exist before running alters
+    from app.models.tenant import SaaSPlan, Tenant
+    from app.models.branch import Branch
+    from app.models.user import User, Role
+    from app.models.room import Room
+    from app.models.booking import Booking
+    Base.metadata.create_all(bind=engine)
+    
     with engine.begin() as conn:
         # 1. Create saas_plans table
         conn.execute(text("""
@@ -69,12 +77,14 @@ def run_migration():
         conn.execute(text("""
             DO $$
             BEGIN
-                IF NOT EXISTS (
-                    SELECT 1 FROM information_schema.columns 
-                    WHERE table_name='branches' AND column_name='tenant_id'
-                ) THEN
-                    ALTER TABLE branches ADD COLUMN tenant_id INTEGER REFERENCES tenants(id) ON DELETE CASCADE;
-                    CREATE INDEX IF NOT EXISTS ix_branches_tenant_id ON branches (tenant_id);
+                IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name='branches') THEN
+                    IF NOT EXISTS (
+                        SELECT 1 FROM information_schema.columns 
+                        WHERE table_name='branches' AND column_name='tenant_id'
+                    ) THEN
+                        ALTER TABLE branches ADD COLUMN tenant_id INTEGER REFERENCES tenants(id) ON DELETE CASCADE;
+                        CREATE INDEX IF NOT EXISTS ix_branches_tenant_id ON branches (tenant_id);
+                    END IF;
                 END IF;
             END $$;
         """))
@@ -84,12 +94,14 @@ def run_migration():
         conn.execute(text("""
             DO $$
             BEGIN
-                IF NOT EXISTS (
-                    SELECT 1 FROM information_schema.columns 
-                    WHERE table_name='users' AND column_name='tenant_id'
-                ) THEN
-                    ALTER TABLE users ADD COLUMN tenant_id INTEGER REFERENCES tenants(id) ON DELETE CASCADE;
-                    CREATE INDEX IF NOT EXISTS ix_users_tenant_id ON users (tenant_id);
+                IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name='users') THEN
+                    IF NOT EXISTS (
+                        SELECT 1 FROM information_schema.columns 
+                        WHERE table_name='users' AND column_name='tenant_id'
+                    ) THEN
+                        ALTER TABLE users ADD COLUMN tenant_id INTEGER REFERENCES tenants(id) ON DELETE CASCADE;
+                        CREATE INDEX IF NOT EXISTS ix_users_tenant_id ON users (tenant_id);
+                    END IF;
                 END IF;
             END $$;
         """))
