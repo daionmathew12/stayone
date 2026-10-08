@@ -184,7 +184,30 @@ def get_branch_id(
                 pass
         return None
     
-    # 2. Otherwise, strictly return user's fixed branch_id
+    # 2. If user belongs to a tenant workspace, allow switching between branches that belong to their tenant
+    if getattr(current_user, "tenant_id", None) is not None:
+        branch_header = request.headers.get("X-Branch-ID")
+        if branch_header:
+            if branch_header == "all":
+                return None
+            try:
+                requested_id = int(branch_header)
+                from app.models.branch import Branch
+                target_branch = db.query(Branch).filter(
+                    Branch.id == requested_id,
+                    Branch.tenant_id == current_user.tenant_id
+                ).first()
+                if target_branch:
+                    if not target_branch.is_active:
+                        raise HTTPException(
+                            status_code=status.HTTP_403_FORBIDDEN,
+                            detail=f"Access denied: Branch '{target_branch.name}' has been disabled."
+                        )
+                    return target_branch.id
+            except ValueError:
+                pass
+
+    # 3. Otherwise, strictly return user's fixed branch_id
     if getattr(current_user, 'branch_id', None) is None:
         raise HTTPException(status_code=403, detail="User not assigned to a branch")
     

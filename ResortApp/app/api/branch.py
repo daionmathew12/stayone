@@ -41,6 +41,12 @@ def get_branches(
     is_global_superadmin = getattr(current_user, 'is_superadmin', False) and current_user.branch_id is None
     
     if not is_global_superadmin:
+        # If tenant admin / owner: return all branches for their tenant
+        if getattr(current_user, "tenant_id", None) is not None:
+            from app.models.branch import Branch as BranchModel
+            from app.utils.auth import has_permission
+            if has_permission(current_user, "/branches") or getattr(current_user.role, 'name', '') in ["Owner / Admin", "Owner", "admin"]:
+                return db.query(BranchModel).filter(BranchModel.tenant_id == current_user.tenant_id).all()
         # Branch admin / staff: return ONLY their corresponding branch
         if current_user.branch_id is not None:
             branch = branch_crud.get_branch_by_id(db, current_user.branch_id)
@@ -62,7 +68,13 @@ def get_branch_by_id(
     """Get details for a specific branch."""
     is_global_superadmin = getattr(current_user, 'is_superadmin', False) and current_user.branch_id is None
     if not is_global_superadmin and current_user.branch_id is not None and current_user.branch_id != branch_id:
-        raise HTTPException(status_code=403, detail="Access denied: You can only view your corresponding branch details.")
+        if getattr(current_user, "tenant_id", None) is not None:
+            from app.models.branch import Branch as BranchModel
+            b = db.query(BranchModel).filter(BranchModel.id == branch_id, BranchModel.tenant_id == current_user.tenant_id).first()
+            if not b:
+                raise HTTPException(status_code=403, detail="Access denied: You can only view your corresponding branch details.")
+        else:
+            raise HTTPException(status_code=403, detail="Access denied: You can only view your corresponding branch details.")
 
     db_branch = branch_crud.get_branch_by_id(db, branch_id)
     if not db_branch:
@@ -84,10 +96,36 @@ async def create_branch(
     location: Optional[str] = Form(None),
     image: Optional[UploadFile] = File(None),
     db: Session = Depends(get_db),
-    admin: User = Depends(verify_superadmin) # Only superadmin can create branches
+    current_user: User = Depends(get_current_user)
 ):
-    """Create a new branch (Super Admin only)."""
+    """
+    Create a new branch:
+    - Global Super Admin: Can create branches across any workspace.
+    - Customer / Tenant Owner: Can create branches for their own business up to their monthly plan quota.
+    """
+    is_global_superadmin = getattr(current_user, 'is_superadmin', False) and current_user.branch_id is None
+    
+    tenant_id = None
+    if not is_global_superadmin:
+        if not getattr(current_user, "tenant_id", None):
+            raise HTTPException(status_code=403, detail="Permission denied. Only authorized resort owners can create branches.")
         
+        tenant_id = current_user.tenant_id
+        from app.models.tenant import Tenant
+        tenant = db.query(Tenant).filter(Tenant.id == tenant_id).first()
+        if not tenant:
+            raise HTTPException(status_code=404, detail="Resort business workspace not found.")
+            
+        # Check quota for monthly plan
+        if tenant.plan and tenant.plan.max_branches:
+            from app.models.branch import Branch as BranchModel
+            existing_count = db.query(BranchModel).filter(BranchModel.tenant_id == tenant_id).count()
+            if existing_count >= tenant.plan.max_branches:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Branch limit reached for your monthly plan ({tenant.plan.max_branches} branch(es)). Please upgrade your subscription to create more branches."
+                )
+
     # Check if code already exists
     existing = branch_crud.get_branch_by_code(db, code)
     if existing:
@@ -110,7 +148,9 @@ async def create_branch(
         instagram=instagram,
         twitter=twitter,
         linkedin=linkedin,
-        location=location
+        location=location,
+        tenant_id=tenant_id,
+        is_active=True
     )
 
 @router.put("/branches/{branch_id}", response_model=Branch)

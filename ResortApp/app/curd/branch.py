@@ -14,7 +14,7 @@ def get_branch_by_id(db: Session, branch_id: int) -> Optional[Branch]:
 def get_branch_by_code(db: Session, code: str) -> Optional[Branch]:
     return db.query(Branch).filter(Branch.code == code).first()
 
-def create_branch(db: Session, name: str, code: str, address: str = None, phone: str = None, email: str = None, gst_number: str = None, image_url: str = None, facebook: str = None, instagram: str = None, twitter: str = None, linkedin: str = None, location: str = None) -> Branch:
+def create_branch(db: Session, name: str, code: str, address: str = None, phone: str = None, email: str = None, gst_number: str = None, image_url: str = None, facebook: str = None, instagram: str = None, twitter: str = None, linkedin: str = None, location: str = None, tenant_id: int = None, is_active: bool = True) -> Branch:
     db_branch = Branch(
         name=name,
         code=code,
@@ -27,7 +27,9 @@ def create_branch(db: Session, name: str, code: str, address: str = None, phone:
         instagram=instagram,
         twitter=twitter,
         linkedin=linkedin,
-        location=location
+        location=location,
+        tenant_id=tenant_id,
+        is_active=is_active
     )
     db.add(db_branch)
     db.commit()
