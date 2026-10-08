@@ -53,7 +53,7 @@ class BookingCreate(BaseModel):
     external_id: Optional[str] = None
     guest_name: str
     guest_mobile: str
-    guest_email: Optional[EmailStr] = None
+    guest_email: Optional[str] = None
     check_in: date
     check_out: date
     adults: int
@@ -64,28 +64,38 @@ class BookingCreate(BaseModel):
     pan_number: Optional[str] = None  # Optional PAN for GST verification
     gst_number: Optional[str] = None  # Guest GST Number
 
+    @field_validator('guest_email', 'gst_number', 'pan_number', mode='before')
+    @classmethod
+    def blank_strings_to_none(cls, v):
+        if v == "" or v is None or (isinstance(v, str) and not v.strip()):
+            return None
+        return v.strip() if isinstance(v, str) else v
 
-    @validator('pan_number')
+    @field_validator('guest_email')
+    @classmethod
+    def validate_guest_email(cls, v):
+        if not v:
+            return None
+        pattern = r'^[^@\s]+@[^@\s]+\.[^@\s]+$'
+        if not re.match(pattern, v):
+            raise ValueError('Invalid email format: must contain @ and a valid domain')
+        return v
+
+    @field_validator('pan_number')
+    @classmethod
     def validate_pan(cls, v):
-        if v is None or v == '':
+        if not v:
             return None
         pattern = r'^[A-Z]{5}[0-9]{4}[A-Z]$'
         if not re.fullmatch(pattern, v):
             raise ValueError('Invalid PAN format')
         return v
-    def blank_email_to_none(cls, v):
-        if v == "" or v is None:
-            return None
-        return v
 
-    @validator('check_out')
-    def validate_booking_duration(cls, v, values):
-        """Ensure minimum booking duration of 1 day"""
-        if 'check_in' in values:
-            check_in = values['check_in']
-            if v <= check_in:
-                raise ValueError('Check-out date must be at least 1 day after check-in date')
-        return v
+    @model_validator(mode='after')
+    def validate_booking_duration(self):
+        if self.check_in and self.check_out and self.check_out <= self.check_in:
+            raise ValueError('Check-out date must be at least 1 day after check-in date')
+        return self
 
 # This is the main output schema for displaying bookings
 class BookingOut(BaseModel):

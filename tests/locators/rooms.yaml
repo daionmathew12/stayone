@@ -1,0 +1,10 @@
+# =============================================================================
+# STAYONE ROOMS & INVENTORY - XPATH LOCATORS
+# =============================================================================
+
+rooms_section_heading: "//*[contains(text(), 'All Rooms - Complete Details') or contains(text(), 'Rooms')]"
+room_cards: "//div[contains(., 'Room') and contains(., 'night')]"
+room_card_by_number: "//div[contains(., 'Room {room_number}')]"
+room_status_available: "//*[contains(text(), 'Available')]"
+room_status_booked: "//*[contains(text(), 'Booked')]"
+room_status_checked_in: "//*[contains(text(), 'Checked-in')]"

@@ -1,0 +1,23 @@
+name: "Admin End-to-End Bookings Flow Scenario"
+description: "Executes keyword steps loaded from YAML using Playwright and XPath locators"
+
+steps:
+  - keyword: open_admin_login
+    description: "Navigate to StayOne admin login portal"
+
+  - keyword: login_as_admin
+    description: "Submit superadmin credentials and verify dashboard redirect"
+
+  - keyword: navigate_to_module
+    args: ["bookings"]
+    description: "Navigate to bookings module from sidebar"
+
+  - keyword: switch_to_bookings_tab
+    description: "Switch to the active Bookings Management tab"
+
+  - keyword: open_create_booking_modal
+    description: "Click Create New Booking button and verify modal terminal"
+
+  - keyword: take_screenshot
+    args: ["keyword_scenario_success"]
+    description: "Capture visual verification artifact"

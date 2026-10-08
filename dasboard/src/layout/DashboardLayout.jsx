@@ -32,7 +32,7 @@ import { useBranch } from "../contexts/BranchContext";
 import { Building2, ChevronDown } from "lucide-react";
 import { usePermissions } from "../hooks/usePermissions";
 
-import { CreditCard, AlertCircle, Copy, Check, MessageSquare, Zap, ArrowUpRight, Clock, Calendar } from "lucide-react";
+import { CreditCard, AlertCircle, Copy, Check, MessageSquare, Zap, ArrowUpRight, Clock, Calendar, CheckCircle2 } from "lucide-react";
 import api from "../services/api";
 
 // Define professional, high-end themes with a focus on harmony and readability.

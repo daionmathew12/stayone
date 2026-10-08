@@ -26,11 +26,13 @@ nosetests.xml
 coverage.xml
 *.cover
 .hypothesis/
+tests/reports/
 
 # --- Environment & Secrets ---
 .env
 .env.local
 .env.*.local
+.env.production
 *.pem
 *.key
 
@@ -41,6 +43,8 @@ temp_*/
 *.tar.gz
 *.sql
 *.dump
+*.db
+*.sqlite*
 *.log
 *.bak
 *.old
@@ -69,6 +73,7 @@ temp_*/
 /migrate_*.py
 /*.ps1
 /*.sh
+!/deploy_to_gcp.sh
 /*.bat
 !/start_all_local.bat
 /*.txt

@@ -87,7 +87,7 @@ def login(request: LoginRequest, db: Session = Depends(auth.get_db)):
         
         # DEBUG LOGGING TO FILE
         try:
-            import tempfile
+            import os, tempfile
             log_path = os.path.join(tempfile.gettempdir(), "auth_debug.log")
             with open(log_path, "a") as f:
                 f.write(f"\n--- Login Attempt {request.email} ---\n")

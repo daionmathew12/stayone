@@ -89,7 +89,7 @@ class ActivityLoggingMiddleware(BaseHTTPMiddleware):
                         "user_agent": user_agent,
                         "query_params": query_params
                     }),
-                    branch_id=branch_id or 1
+                    branch_id=branch_id if branch_id else None
                 )
                 db.add(log)
                 db.commit()

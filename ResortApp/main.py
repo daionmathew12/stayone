@@ -158,12 +158,27 @@ async def http_exception_handler(request: Request, exc: StarletteHTTPException):
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
     """Handle validation errors with proper logging and CORS headers"""
-    import sys
-    errors = exc.errors()
-    # Sanitize bytes from errors
-    for error in errors:
-        if 'input' in error and isinstance(error['input'], bytes):
-            error['input'] = error['input'].decode('utf-8', errors='replace')
+    from fastapi.encoders import jsonable_encoder
+    try:
+        errors = jsonable_encoder(exc.errors())
+    except Exception:
+        errors = []
+        for err in exc.errors():
+            clean = {}
+            for k, v in err.items():
+                if k == "ctx" and isinstance(v, dict):
+                    clean[k] = {ck: str(cv) for ck, cv in v.items()}
+                elif isinstance(v, bytes):
+                    clean[k] = v.decode("utf-8", errors="replace")
+                else:
+                    try:
+                        import json
+                        json.dumps(v)
+                        clean[k] = v
+                    except Exception:
+                        clean[k] = str(v)
+            errors.append(clean)
+
     print(f"Validation error in {request.method} {request.url.path}: {errors}")
     return JSONResponse(
         status_code=422,

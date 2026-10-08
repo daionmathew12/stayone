@@ -1,0 +1,21 @@
+# =============================================================================
+# STAYONE BOOKINGS MANAGEMENT INTERFACE - XPATH LOCATORS
+# =============================================================================
+
+tab_overview: "//button[contains(., 'Overview')]"
+tab_bookings: "//button[contains(., 'Bookings')]"
+tab_calendar: "//button[contains(., 'Calendar')]"
+tab_packages: "//button[contains(., 'Packages')]"
+tab_rooms: "//button[contains(., 'Rooms')]"
+
+heading_dashboard: "//*[contains(text(), 'Booking Management Dashboard')]"
+heading_booking_operations: "//*[contains(text(), 'Booking Operations')]"
+
+btn_create_new_booking: "//button[contains(., 'Create New Booking')]"
+modal_booking_terminal: "//*[contains(text(), 'New Booking Terminal') or contains(@role, 'dialog')]"
+btn_execute_booking: "//button[contains(., 'Execute Booking')]"
+
+input_search_booking: "//input[contains(@placeholder, 'Search')]"
+bookings_table: "//table"
+booking_table_rows: "//table//tbody//tr"
+booking_row_by_guest: "//table//tbody//tr[contains(., '{guest_name}')]"

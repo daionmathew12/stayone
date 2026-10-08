@@ -99,6 +99,27 @@ API.interceptors.response.use(
       });
     }
 
+    // Format FastAPI / Pydantic validation errors so components never receive raw object/array in detail
+    if (error.response?.data?.detail) {
+      const detail = error.response.data.detail;
+      if (Array.isArray(detail)) {
+        const formatted = detail
+          .map((item) => {
+            if (typeof item === "string") return item;
+            if (item && item.msg) {
+              const field = Array.isArray(item.loc) && item.loc.length > 0 ? item.loc[item.loc.length - 1] : "";
+              return field && field !== "body" ? `${field}: ${item.msg}` : item.msg;
+            }
+            return JSON.stringify(item);
+          })
+          .filter(Boolean)
+          .join(", ");
+        error.response.data.detail = formatted || "Validation error occurred.";
+      } else if (typeof detail === "object" && detail !== null) {
+        error.response.data.detail = detail.msg || detail.message || JSON.stringify(detail);
+      }
+    }
+
     // For other errors, return as-is
     return Promise.reject(error);
   }

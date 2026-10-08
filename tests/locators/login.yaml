@@ -1,0 +1,12 @@
+# =============================================================================
+# STAYONE ADMIN LOGIN PAGE - XPATH LOCATORS
+# =============================================================================
+
+email_input: "//input[@placeholder='name@stayone.com' or @type='text']"
+password_input: "//input[@type='password']"
+submit_button: "//button[@type='submit']"
+remember_me_checkbox: "//input[@id='remember-me']"
+welcome_title: "//h1[contains(text(), 'Welcome Back')]"
+register_link: "//a[contains(@href, 'register')]"
+forgot_password_link: "//a[contains(text(), 'Forgot password?')]"
+branding_logo: "//img[contains(@alt, 'Logo') or contains(@alt, 'Stayone')]"

@@ -25,12 +25,16 @@ def run_migration():
                 max_branches INTEGER DEFAULT 1,
                 max_rooms INTEGER DEFAULT 15,
                 max_staff_users INTEGER DEFAULT 5,
+                description VARCHAR,
+                badge VARCHAR,
                 features TEXT,
                 is_active BOOLEAN DEFAULT TRUE NOT NULL,
                 created_at TIMESTAMP WITHOUT TIME ZONE DEFAULT CURRENT_TIMESTAMP
             );
             CREATE INDEX IF NOT EXISTS ix_saas_plans_id ON saas_plans (id);
             CREATE INDEX IF NOT EXISTS ix_saas_plans_code ON saas_plans (code);
+            ALTER TABLE saas_plans ADD COLUMN IF NOT EXISTS description VARCHAR;
+            ALTER TABLE saas_plans ADD COLUMN IF NOT EXISTS badge VARCHAR;
         """))
         print("[OK] saas_plans table verified/created.")
 
@@ -104,6 +108,8 @@ def run_migration():
                 "max_branches": 1,
                 "max_rooms": 20,
                 "max_staff_users": 10,
+                "description": "Full access to test all core hospitality features.",
+                "badge": "Trial",
                 "features": json.dumps(["dashboard", "room_management", "booking_engine", "qr_menu", "staff_management", "guest_portal"])
             },
             {
@@ -114,6 +120,8 @@ def run_migration():
                 "max_branches": 1,
                 "max_rooms": 25,
                 "max_staff_users": 10,
+                "description": "Ideal for boutique resorts, homestays, and bed & breakfasts.",
+                "badge": "Starter",
                 "features": json.dumps(["dashboard", "room_management", "booking_engine", "qr_menu", "staff_management", "guest_portal", "basic_reports"])
             },
             {
@@ -124,6 +132,8 @@ def run_migration():
                 "max_branches": 3,
                 "max_rooms": 75,
                 "max_staff_users": 30,
+                "description": "For growing resorts and hotels requiring multi-branch and POS.",
+                "badge": "Most Popular",
                 "features": json.dumps(["dashboard", "room_management", "booking_engine", "qr_menu", "staff_management", "guest_portal", "pos", "inventory", "comprehensive_reports", "channel_manager"])
             },
             {
@@ -134,6 +144,8 @@ def run_migration():
                 "max_branches": 999,
                 "max_rooms": 9999,
                 "max_staff_users": 9999,
+                "description": "For hotel chains with custom domain, accounting, and priority support.",
+                "badge": "Enterprise",
                 "features": json.dumps(["dashboard", "room_management", "booking_engine", "qr_menu", "staff_management", "guest_portal", "pos", "inventory", "comprehensive_reports", "channel_manager", "accounting", "custom_domain", "dedicated_support"])
             }
         ]
@@ -145,6 +157,13 @@ def run_migration():
                 db.add(plan)
                 db.commit()
                 print(f"[OK] Seeded SaaS Plan: {p_data['name']}")
+            else:
+                # Update description and badge if missing
+                if not existing.description or not existing.badge:
+                    existing.description = p_data.get("description")
+                    existing.badge = p_data.get("badge")
+                    db.commit()
+                    print(f"[OK] Updated SaaS Plan metadata: {p_data['name']}")
 
         # Ensure default Tenant 1 for existing data
         trial_plan = db.query(SaaSPlan).filter(SaaSPlan.code == "trial").first()

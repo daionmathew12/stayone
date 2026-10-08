@@ -1,0 +1,111 @@
+name: stayone-prod
+
+services:
+  # ============================================================================
+  # 1. PostgreSQL Database Service (Internal Only)
+  # ============================================================================
+  db:
+    image: postgres:15-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-stayone_prod}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-StayOne!Secure2026DbProd#}
+      POSTGRES_DB: ${POSTGRES_DB:-stayone_db}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-stayone_prod} -d ${POSTGRES_DB:-stayone_db}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - stayone-network
+
+  # ============================================================================
+  # 2. Production FastAPI Backend (ResortApp with Gunicorn + Uvicorn)
+  # ============================================================================
+  backend:
+    build:
+      context: ./ResortApp
+      dockerfile: Dockerfile.prod
+    image: stayone-backend:production
+    restart: unless-stopped
+    env_file:
+      - .env.production
+    environment:
+      DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER:-stayone_prod}:${POSTGRES_PASSWORD:-StayOne!Secure2026DbProd#}@db:5432/${POSTGRES_DB:-stayone_db}
+      PORT: 8011
+      PYTHONUNBUFFERED: "1"
+    volumes:
+      - resortapp_uploads:/app/uploads
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - stayone-network
+    # Expose to localhost for VM health checking
+    ports:
+      - "127.0.0.1:8011:8011"
+
+  # ============================================================================
+  # 3. Production Admin Dashboard (dasboard - Multi-Stage Nginx)
+  # ============================================================================
+  admin:
+    build:
+      context: ./dasboard
+      dockerfile: Dockerfile.prod
+    image: stayone-admin:production
+    restart: unless-stopped
+    depends_on:
+      - backend
+    networks:
+      - stayone-network
+
+  # ============================================================================
+  # 4. Production User/Guest Portal (userend - Multi-Stage Nginx)
+  # ============================================================================
+  userend:
+    build:
+      context: ./userend
+      dockerfile: Dockerfile.prod
+    image: stayone-userend:production
+    restart: unless-stopped
+    depends_on:
+      - backend
+    networks:
+      - stayone-network
+
+  # ============================================================================
+  # 5. Production Gateway Reverse Proxy (Nginx)
+  # ============================================================================
+  nginx:
+    image: nginx:alpine
+    restart: unless-stopped
+    ports:
+      - "${GATEWAY_PORT:-80}:80"
+      - "443:443"
+    volumes:
+      - ./nginx/production.conf:/etc/nginx/conf.d/default.conf:ro
+      - certbot_conf:/etc/letsencrypt
+      - certbot_www:/var/www/certbot
+    depends_on:
+      - backend
+      - admin
+      - userend
+    networks:
+      - stayone-network
+
+networks:
+  stayone-network:
+    driver: bridge
+
+volumes:
+  postgres_data:
+    name: stayone_prod_postgres_data
+  resortapp_uploads:
+    name: stayone_prod_uploads
+  certbot_conf:
+    name: stayone_prod_certbot_conf
+  certbot_www:
+    name: stayone_prod_certbot_www
+

@@ -133,6 +133,7 @@ export default function SubscriptionBilling() {
   const isPaid = billingInfo?.payment_status === "paid";
   const isPaymentRaised = billingInfo?.payment_status === "payment_raised";
   const isActive = billingInfo?.subscription_status === "active";
+  const expiryDateFormatted = billingInfo?.expiry_date || (billingInfo?.next_billing_date ? new Date(billingInfo.next_billing_date).toLocaleDateString("en-IN", { day: 'numeric', month: 'short', year: 'numeric' }) : null);
 
   // Pre-filled WhatsApp message
   const whatsappUrl = `https://api.whatsapp.com/send?phone=919876543210&text=${encodeURIComponent(

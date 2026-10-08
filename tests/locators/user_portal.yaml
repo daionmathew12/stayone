@@ -1,0 +1,19 @@
+# =============================================================================
+# STAYONE USER-END PUBLIC PORTAL & GUEST ROOM PORTAL - XPATH LOCATORS
+# =============================================================================
+
+portal_hero_title: "//h1 | //section//h2"
+theme_switch_buttons: "//button[@title]"
+
+# Guest In-Room QR Portal
+guest_room_heading: "//h1[contains(text(), 'Welcome to Room')]"
+guest_room_not_checked_in_notice: "//*[contains(text(), 'not currently checked-in')]"
+btn_call_reception: "//button[contains(., 'Call Reception')]"
+
+# In-Room Service Controls (When Checked-in)
+service_emergency_section: "//*[contains(text(), 'Emergency')]"
+service_food_and_drinks: "//*[contains(text(), 'Food & Drinks')]"
+service_room_service: "//*[contains(text(), 'Room Service')]"
+service_housekeeping: "//*[contains(text(), 'Housekeeping')]"
+service_maintenance: "//*[contains(text(), 'Maintenance')]"
+service_checkout: "//*[contains(text(), 'Checkout')]"

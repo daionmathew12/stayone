@@ -3470,7 +3470,13 @@ const BookingFormModal = ({
                 </div>
                 <div className="flex-1">
                   <p className="font-bold text-sm uppercase tracking-wide leading-none mb-1">{feedback.type === "success" ? "Assignment Successful" : "Attention Required"}</p>
-                  <p className="font-semibold text-sm opacity-90">{feedback.message}</p>
+                  <p className="font-semibold text-sm opacity-90">
+                    {typeof feedback.message === 'string' 
+                      ? feedback.message 
+                      : (Array.isArray(feedback.message) 
+                          ? feedback.message.map(d => d?.msg || (typeof d === 'string' ? d : JSON.stringify(d))).join(', ') 
+                          : (feedback.message?.msg || feedback.message?.message || JSON.stringify(feedback.message || '')))}
+                  </p>
                 </div>
               </motion.div>
             )}
@@ -4100,9 +4106,15 @@ const Bookings = () => {
   const [bannerMessage, setBannerMessage] = useState({ type: null, text: "" });
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  // Function to show banner message
+  // Function to show banner message safely
   const showBannerMessage = (type, text) => {
-    setBannerMessage({ type, text });
+    let safeText = text;
+    if (Array.isArray(text)) {
+      safeText = text.map(d => (d && d.msg ? d.msg : (typeof d === 'string' ? d : JSON.stringify(d)))).join(', ');
+    } else if (text && typeof text === 'object') {
+      safeText = text.msg || text.message || JSON.stringify(text);
+    }
+    setBannerMessage({ type, text: safeText || "" });
   };
 
   const closeBannerMessage = () => {
@@ -5009,6 +5021,7 @@ const Bookings = () => {
 
       const bookingData = {
         ...packageBookingForm,
+        guest_email: packageBookingForm.guest_email && packageBookingForm.guest_email.trim() ? packageBookingForm.guest_email.trim() : null,
         package_id: parseInt(packageBookingForm.package_id),
         adults: parseInt(packageBookingForm.adults),
         children: parseInt(packageBookingForm.children),
@@ -5043,9 +5056,20 @@ const Bookings = () => {
       setBookings((prev) => dedupeBookings([newPackageBooking, ...prev]));
       setIsBookingModalOpen(false);
     } catch (err) {
-      console.error(err);
-      const errorMessage =
-        err.response?.data?.detail || "Failed to process package booking.";
+      console.error("Package booking error:", err);
+      const detail = err.response?.data?.detail;
+      let errorMessage = "Failed to process package booking.";
+      if (typeof detail === 'string') {
+        errorMessage = detail;
+      } else if (Array.isArray(detail)) {
+        errorMessage = detail.map(d => (d && d.msg ? d.msg : (typeof d === 'string' ? d : JSON.stringify(d)))).join(', ');
+      } else if (detail && typeof detail === 'object') {
+        errorMessage = detail.msg || detail.message || JSON.stringify(detail);
+      } else if (err.response?.data?.message) {
+        errorMessage = err.response.data.message;
+      } else if (err.message) {
+        errorMessage = err.message;
+      }
       showBannerMessage("error", errorMessage);
     } finally {
       setIsSubmitting(false);
@@ -5610,11 +5634,11 @@ const Bookings = () => {
           {
             room_ids: roomIds,
             room_type_id: item.room_type_id ? parseInt(item.room_type_id) : null,
-            source: formData.source,
+            source: formData.source || "Admin",
             guest_name: formData.guestName,
             guest_mobile: formData.guestMobile,
-            guest_email: formData.guestEmail,
-            gst_number: formData.gstNumber,
+            guest_email: formData.guestEmail && formData.guestEmail.trim() ? formData.guestEmail.trim() : null,
+            gst_number: formData.gstNumber && formData.gstNumber.trim() ? formData.gstNumber.trim() : null,
             check_in: formData.checkIn,
             check_out: formData.checkOut,
             adults: parseInt(item.adults),
@@ -5654,8 +5678,19 @@ const Bookings = () => {
       setIsBookingModalOpen(false);
     } catch (err) {
       console.error("Booking creation error:", err);
-      const errorMessage =
-        err.response?.data?.detail || err.response?.data?.message || "Error creating booking.";
+      const detail = err.response?.data?.detail;
+      let errorMessage = "Error creating booking.";
+      if (typeof detail === 'string') {
+        errorMessage = detail;
+      } else if (Array.isArray(detail)) {
+        errorMessage = detail.map(d => (d && d.msg ? d.msg : (typeof d === 'string' ? d : JSON.stringify(d)))).join(', ');
+      } else if (detail && typeof detail === 'object') {
+        errorMessage = detail.msg || detail.message || JSON.stringify(detail);
+      } else if (err.response?.data?.message) {
+        errorMessage = err.response.data.message;
+      } else if (err.message) {
+        errorMessage = err.message;
+      }
       showBannerMessage("error", errorMessage);
     } finally {
       setIsSubmitting(false);

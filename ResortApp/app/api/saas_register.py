@@ -73,7 +73,7 @@ class SaaSUserRegisterRequest(BaseModel):
 class SaaSRegisterResponse(BaseModel):
     success: bool
     message: str
-    access_token: str
+    access_token: Optional[str] = None
     token_type: str = "bearer"
     tenant: Dict[str, Any]
     branch: Dict[str, Any]

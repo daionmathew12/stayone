@@ -11,7 +11,31 @@ const BannerMessage = ({ message, onClose, autoDismiss = true, duration = 5000 }
     }
   }, [message.text, autoDismiss, duration, onClose]);
 
-  if (!message.text) return null;
+  if (!message || !message.text) return null;
+
+  const formatText = (content) => {
+    if (!content) return '';
+    if (typeof content === 'string') return content;
+    if (Array.isArray(content)) {
+      return content
+        .map((item) => {
+          if (typeof item === 'string') return item;
+          if (item && item.msg) {
+            const field = Array.isArray(item.loc) && item.loc.length > 0 ? item.loc[item.loc.length - 1] : "";
+            return field && field !== 'body' ? `${field}: ${item.msg}` : item.msg;
+          }
+          return JSON.stringify(item);
+        })
+        .join(', ');
+    }
+    if (typeof content === 'object') {
+      return content.msg || content.message || JSON.stringify(content);
+    }
+    return String(content);
+  };
+
+  const displayText = formatText(message.text);
+  if (!displayText) return null;
 
   const isSuccess = message.type === 'success';
   const bgColor = isSuccess ? 'bg-green-600' : 'bg-red-600';
@@ -23,7 +47,7 @@ const BannerMessage = ({ message, onClose, autoDismiss = true, duration = 5000 }
         <div className="flex items-center justify-between">
           <div className="flex items-center">
             <span className="mr-2 text-sm">{icon}</span>
-            <span className="text-sm font-medium">{message.text}</span>
+            <span className="text-sm font-medium">{displayText}</span>
           </div>
           <button
             onClick={onClose}

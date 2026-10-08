@@ -1,0 +1,28 @@
+# =============================================================================
+# STAYONE ADMIN DASHBOARD & SIDEBAR NAVIGATION - XPATH LOCATORS
+# =============================================================================
+
+sidebar_nav: "//nav"
+nav_superadmin_dashboard: "//nav//a[contains(@href, 'superadmin-dashboard')]"
+nav_dashboard: "//nav//a[contains(@href, 'dashboard')]"
+nav_finance: "//nav//a[contains(@href, 'account')]"
+nav_bookings: "//nav//a[contains(@href, 'bookings')]"
+nav_services: "//nav//a[contains(@href, 'services')]"
+nav_expenses: "//nav//a[contains(@href, 'expenses')]"
+nav_food_management: "//nav//a[contains(@href, 'food-orders')]"
+nav_billing: "//nav//a[contains(@href, 'billing')]"
+nav_web_management: "//nav//a[contains(@href, 'Userfrontend_data')]"
+nav_reports: "//nav//a[contains(@href, 'report')]"
+nav_guest_profiles: "//nav//a[contains(@href, 'guestprofiles')]"
+nav_employee_management: "//nav//a[contains(@href, 'employee-management')]"
+nav_inventory: "//nav//a[contains(@href, 'inventory')]"
+nav_day_audit: "//nav//a[contains(@href, 'day-audit')]"
+nav_settings: "//nav//a[contains(@href, 'settings')]"
+nav_branch_management: "//nav//a[contains(@href, 'branch-management')]"
+nav_activity_logs: "//nav//a[contains(@href, 'activity-logs')]"
+btn_logout: "//a[contains(., 'Log Out') or contains(., 'Logout')]"
+
+# Branch Switcher Controls
+branch_selector_dropdown: "//button[contains(., 'All Branches') or contains(., 'Branch')]"
+btn_switch_all_branches: "//button[contains(., 'All Branches')]"
+branch_option_item: "//button[contains(., '{branch_name}')]"
