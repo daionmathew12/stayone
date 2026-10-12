@@ -171,6 +171,7 @@ async def update_branch(
     password: Optional[str] = Form(None),
     payment_status: Optional[str] = Form(None),
     monthly_amount: Optional[float] = Form(None),
+    next_billing_date: Optional[str] = Form(None),
     image: Optional[UploadFile] = File(None),
     db: Session = Depends(get_db),
     admin: User = Depends(verify_superadmin) # Only superadmin can update branches
@@ -217,12 +218,22 @@ async def update_branch(
                 tenant.payment_status = payment_status.strip().lower()
                 if tenant.payment_status == "paid":
                     tenant.last_billed_at = datetime.now(timezone.utc)
-                    tenant.next_billing_date = datetime.now(timezone.utc) + timedelta(days=30)
+                    if not (next_billing_date and next_billing_date.strip()):
+                        tenant.next_billing_date = datetime.now(timezone.utc) + timedelta(days=30)
                     tenant.subscription_status = "active"
                     tenant.is_active = True
                     updated.is_active = True
             if monthly_amount is not None:
                 tenant.monthly_amount = monthly_amount
+            if next_billing_date and next_billing_date.strip():
+                try:
+                    clean_date = next_billing_date.strip()
+                    if len(clean_date) == 10:
+                        tenant.next_billing_date = datetime.strptime(clean_date, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+                    else:
+                        tenant.next_billing_date = datetime.fromisoformat(clean_date)
+                except Exception:
+                    pass
             db.commit()
 
     # Update property admin user credentials if password or email is provided

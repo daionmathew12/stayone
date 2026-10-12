@@ -596,6 +596,7 @@ export default function SuperAdminDashboard() {
             password: '',
             payment_status: target.payment_status || branchToEdit.payment_status || 'paid',
             monthly_amount: target.monthly_amount !== undefined ? target.monthly_amount : (branchToEdit.monthly_amount !== undefined ? branchToEdit.monthly_amount : 2999),
+            next_billing_date: target.next_billing_date ? target.next_billing_date.split('T')[0] : (branchToEdit.next_billing_date ? branchToEdit.next_billing_date.split('T')[0] : ''),
             gst_number: branchToEdit.gst_number || '',
             facebook: branchToEdit.facebook || '',
             instagram: branchToEdit.instagram || '',
@@ -1844,6 +1845,56 @@ export default function SuperAdminDashboard() {
                                                     className="w-full px-3.5 py-2 text-sm border border-gray-200 rounded-xl focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-500 outline-none transition-all font-bold"
                                                     placeholder="2500"
                                                 />
+                                            </div>
+                                            <div className="col-span-1 sm:col-span-2">
+                                                <div className="flex items-center justify-between mb-1">
+                                                    <label className="block text-xs font-bold text-gray-600">
+                                                        Subscription Due Date (Next Billing Cycle)
+                                                    </label>
+                                                    <div className="flex items-center gap-1.5 text-[11px]">
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => {
+                                                                const tmrw = new Date();
+                                                                tmrw.setDate(tmrw.getDate() + 1);
+                                                                setEditFormData(prev => ({ ...prev, next_billing_date: tmrw.toISOString().split('T')[0] }));
+                                                            }}
+                                                            className="px-2 py-0.5 font-bold text-amber-700 bg-amber-50 hover:bg-amber-100 border border-amber-200 rounded-md transition-colors"
+                                                        >
+                                                            Tomorrow
+                                                        </button>
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => {
+                                                                const today = new Date();
+                                                                setEditFormData(prev => ({ ...prev, next_billing_date: today.toISOString().split('T')[0] }));
+                                                            }}
+                                                            className="px-2 py-0.5 font-semibold text-rose-700 bg-rose-50 hover:bg-rose-100 border border-rose-200 rounded-md transition-colors"
+                                                        >
+                                                            Today
+                                                        </button>
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => {
+                                                                const in30 = new Date();
+                                                                in30.setDate(in30.getDate() + 30);
+                                                                setEditFormData(prev => ({ ...prev, next_billing_date: in30.toISOString().split('T')[0] }));
+                                                            }}
+                                                            className="px-2 py-0.5 font-semibold text-indigo-700 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 rounded-md transition-colors"
+                                                        >
+                                                            +30 Days
+                                                        </button>
+                                                    </div>
+                                                </div>
+                                                <input
+                                                    type="date"
+                                                    value={editFormData.next_billing_date || ''}
+                                                    onChange={(e) => setEditFormData({ ...editFormData, next_billing_date: e.target.value })}
+                                                    className="w-full px-3.5 py-2 text-sm border border-gray-200 rounded-xl focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-500 outline-none transition-all font-mono font-medium text-gray-800"
+                                                />
+                                                <p className="text-[11px] text-gray-400 mt-1">
+                                                    Changing this date updates the countdown banner, overdue alerts, and billing renewal timing for the property.
+                                                </p>
                                             </div>
                                         </div>
                                     </div>
