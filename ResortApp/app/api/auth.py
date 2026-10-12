@@ -103,6 +103,7 @@ def login(request: LoginRequest, db: Session = Depends(auth.get_db)):
             "user_id": user.id, 
             "role": user.role.name,
             "branch_id": user.branch_id,
+            "tenant_id": getattr(user, 'tenant_id', None),
             "is_superadmin": getattr(user, 'is_superadmin', False),
             "permissions": user.role.permissions_list
         }

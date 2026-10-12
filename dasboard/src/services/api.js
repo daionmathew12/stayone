@@ -24,6 +24,11 @@ API.interceptors.request.use((req) => {
     req.headers["X-Branch-ID"] = branchId; // 'all' or a numeric branch id
   }
 
+  const tenantId = localStorage.getItem("tenant_id");
+  if (tenantId && !req.headers["X-Tenant-ID"]) {
+    req.headers["X-Tenant-ID"] = tenantId;
+  }
+
   // Add cache-busting headers for GET requests to prevent browser caching
   if (req.method === 'get') {
     req.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate';

@@ -11,9 +11,11 @@ def resolve_tenant_from_request(request: Request, db: Session) -> Optional[Tenan
     """
     Multi-tenant resolver hierarchy:
     1. Header: 'X-Tenant-Slug' or 'X-Tenant-ID'
-    2. Query param: '?tenant=...'
-    3. Host subdomain: e.g. 'paradisebay.stayone.com' -> 'paradisebay'
-    4. Default fallback: First active tenant or 'stayone'
+    2. Header: 'X-Branch-ID' (resolves parent tenant of active branch)
+    3. JWT Bearer Auth: User's assigned tenant_id or branch's tenant_id
+    4. Query param: '?tenant=...'
+    5. Host subdomain: e.g. 'paradisebay.stayone.com' -> 'paradisebay'
+    6. Default fallback: First active tenant or 'stayone'
     """
     tenant = None
 
@@ -30,14 +32,50 @@ def resolve_tenant_from_request(request: Request, db: Session) -> Optional[Tenan
         if tenant:
             return tenant
 
-    # 2. Check Query parameter
+    # 2. Check X-Branch-ID Header
+    branch_id_header = request.headers.get("X-Branch-ID")
+    if branch_id_header and branch_id_header.strip().isdigit():
+        from app.models.branch import Branch
+        branch = db.query(Branch).filter(Branch.id == int(branch_id_header.strip())).first()
+        if branch and branch.tenant_id:
+            tenant = db.query(Tenant).filter(Tenant.id == branch.tenant_id, Tenant.is_active == True).first()
+            if tenant:
+                return tenant
+
+    # 3. Check JWT Bearer Token (Authenticated User's Tenant)
+    auth_header = request.headers.get("Authorization")
+    if auth_header and auth_header.startswith("Bearer "):
+        token = auth_header.split(" ")[1]
+        try:
+            from app.utils.auth import decode_token
+            from app.models.user import User as UserModel
+            from app.models.branch import Branch
+            payload = decode_token(token)
+            user_id = payload.get("user_id")
+            if user_id:
+                u = db.query(UserModel).filter(UserModel.id == user_id).first()
+                if u:
+                    if u.tenant_id:
+                        tenant = db.query(Tenant).filter(Tenant.id == u.tenant_id, Tenant.is_active == True).first()
+                        if tenant:
+                            return tenant
+                    elif u.branch_id:
+                        branch = db.query(Branch).filter(Branch.id == u.branch_id).first()
+                        if branch and branch.tenant_id:
+                            tenant = db.query(Tenant).filter(Tenant.id == branch.tenant_id, Tenant.is_active == True).first()
+                            if tenant:
+                                return tenant
+        except Exception:
+            pass
+
+    # 4. Check Query parameter
     tenant_param = request.query_params.get("tenant")
     if tenant_param:
         tenant = db.query(Tenant).filter(Tenant.slug == tenant_param.strip().lower(), Tenant.is_active == True).first()
         if tenant:
             return tenant
 
-    # 3. Check Hostname / Subdomain
+    # 5. Check Hostname / Subdomain
     host = request.headers.get("host", "").split(":")[0].lower()
     if host and host not in ("localhost", "127.0.0.1") and not host.replace(".", "").isdigit():
         parts = host.split(".")
@@ -53,7 +91,7 @@ def resolve_tenant_from_request(request: Request, db: Session) -> Optional[Tenan
         if tenant:
             return tenant
 
-    # 4. Fallback to primary default tenant
+    # 6. Fallback to primary default tenant
     tenant = db.query(Tenant).filter(Tenant.slug == "stayone").first()
     if not tenant:
         tenant = db.query(Tenant).first()
