@@ -457,9 +457,10 @@ def fix_missing_journal_entries(
         errors = []
         
         for checkout in checkouts_to_fix:
-            # Check if journal entry exists
+            # Check if journal entry exists (case-insensitive)
+            from sqlalchemy import func
             journal_entry = db.query(JournalEntry).filter(
-                JournalEntry.reference_type == "CHECKOUT",
+                func.lower(JournalEntry.reference_type) == "checkout",
                 JournalEntry.reference_id == checkout.id
             ).first()
             
@@ -473,7 +474,15 @@ def fix_missing_journal_entries(
                     checkout_id=checkout.id,
                     room_total=float(checkout.room_total or 0),
                     food_total=float(checkout.food_total or 0),
-                    service_total=float(checkout.service_total or 0),
+                    service_total=float(
+                        (checkout.service_total or 0) +
+                        (checkout.consumables_charges or 0) +
+                        (checkout.inventory_charges or 0) +
+                        (checkout.asset_damage_charges or 0) +
+                        (checkout.key_card_fee or 0) +
+                        (checkout.late_checkout_fee or 0) +
+                        (checkout.tips_gratuity or 0)
+                    ),
                     package_total=float(checkout.package_total or 0),
                     tax_amount=float(checkout.tax_amount or 0),
                     discount_amount=float(checkout.discount_amount or 0),
@@ -483,7 +492,9 @@ def fix_missing_journal_entries(
                     gst_rate=18.0,
                     payment_method=checkout.payment_method or "cash",
                     branch_id=checkout.branch_id,
-                    created_by=current_user.id if current_user else None
+                    created_by=current_user.id if current_user else None,
+                    advance_amount=float(checkout.advance_deposit or 0),
+                    refund_amount=float(checkout.refund_amount or 0)
                 )
 
                 
@@ -1730,26 +1741,12 @@ def get_automatic_accounting_report(
 
 
 # ── Seed Chart of Accounts ───────────────────────────────────────────────────
-@router.post("/seed-chart-of-accounts")
-def seed_chart_of_accounts(
-    db: Session = Depends(get_db),
-    branch_id: int = Depends(get_branch_id),
-    current_user: User = Depends(get_current_user)
-):
+def seed_chart_of_accounts_for_branch(db: Session, branch_id: int):
     """
-    Seed a standard hospitality Chart of Accounts for the current branch.
-    Safe to call: skipped automatically if groups already exist for this branch.
+    Seed a standard hospitality Chart of Accounts for the given branch.
+    Idempotent: skips existing groups and creates missing ledgers.
     """
     from app.models.account import AccountGroup, AccountLedger
-
-    existing = db.query(AccountGroup).filter(AccountGroup.branch_id == branch_id).count()
-    if existing > 0:
-        return {
-            "status": "skipped",
-            "message": f"Already have {existing} account groups in this branch. Delete them first to re-seed.",
-            "groups_created": 0,
-            "ledgers_created": 0,
-        }
 
     ACCOUNT_GROUPS = [
         # Assets
@@ -1776,11 +1773,15 @@ def seed_chart_of_accounts(
         {"name": "Tax Payable",             "account_type": "Tax",       "description": "Tax liabilities"},
     ]
 
+    groups_created = 0
     group_map = {}
     for g in ACCOUNT_GROUPS:
-        grp = AccountGroup(**g, branch_id=branch_id)
-        db.add(grp)
-        db.flush()
+        grp = db.query(AccountGroup).filter(AccountGroup.branch_id == branch_id, AccountGroup.name == g["name"]).first()
+        if not grp:
+            grp = AccountGroup(**g, branch_id=branch_id)
+            db.add(grp)
+            db.flush()
+            groups_created += 1
         group_map[g["name"]] = grp.id
 
     def gid(name):
@@ -1793,10 +1794,9 @@ def seed_chart_of_accounts(
         {"name": "Petty Cash",                      "code": "1003", "group_id": gid("Cash & Bank"),          "module": "General",   "balance_type": "debit",  "opening_balance": 0},
         # Current Assets
         {"name": "Accounts Receivable",             "code": "1101", "group_id": gid("Current Assets"),      "module": "Booking",   "balance_type": "debit",  "opening_balance": 0},
-
         {"name": "Inventory Stock",                 "code": "1103", "group_id": gid("Current Assets"),      "module": "Inventory", "balance_type": "debit",  "opening_balance": 0},
         {"name": "Prepaid Expenses",                "code": "1104", "group_id": gid("Current Assets"),      "module": "General",   "balance_type": "debit",  "opening_balance": 0},
-        {"name": "Staff Loans & Advances",           "code": "1105", "group_id": gid("Current Assets"),      "module": "Employee",  "balance_type": "debit",  "opening_balance": 0},
+        {"name": "Staff Loans & Advances",          "code": "1105", "group_id": gid("Current Assets"),      "module": "Employee",  "balance_type": "debit",  "opening_balance": 0},
         # Fixed Assets
         {"name": "Furniture & Fixtures",            "code": "1201", "group_id": gid("Fixed Assets"),        "module": "General",   "balance_type": "debit",  "opening_balance": 0},
         {"name": "Equipment",                       "code": "1202", "group_id": gid("Fixed Assets"),        "module": "General",   "balance_type": "debit",  "opening_balance": 0},
@@ -1826,6 +1826,8 @@ def seed_chart_of_accounts(
         {"name": "Food & Beverage Purchases",       "code": "5101", "group_id": gid("Operational Expenses"),"module": "Purchase",  "balance_type": "debit",  "opening_balance": 0},
         {"name": "Housekeeping Supplies",           "code": "5102", "group_id": gid("Operational Expenses"),"module": "Inventory", "balance_type": "debit",  "opening_balance": 0},
         {"name": "Laundry Costs",                   "code": "5103", "group_id": gid("Operational Expenses"),"module": "Service",   "balance_type": "debit",  "opening_balance": 0},
+        {"name": "Discount Allowed",                "code": "5104", "group_id": gid("Operational Expenses"),"module": "Expense",   "balance_type": "debit",  "opening_balance": 0},
+        {"name": "Direct Expenses",                 "code": "5105", "group_id": gid("Operational Expenses"),"module": "Expense",   "balance_type": "debit",  "opening_balance": 0},
         {"name": "Electricity",                     "code": "5201", "group_id": gid("Utility Expenses"),    "module": "Expense",   "balance_type": "debit",  "opening_balance": 0},
         {"name": "Water",                           "code": "5202", "group_id": gid("Utility Expenses"),    "module": "Expense",   "balance_type": "debit",  "opening_balance": 0},
         {"name": "Internet & Communications",       "code": "5203", "group_id": gid("Utility Expenses"),    "module": "Expense",   "balance_type": "debit",  "opening_balance": 0},
@@ -1841,18 +1843,37 @@ def seed_chart_of_accounts(
 
     ledger_count = 0
     for l in LEDGERS:
-        ledger = AccountLedger(**l, branch_id=branch_id)
-        db.add(ledger)
-        ledger_count += 1
+        existing_l = db.query(AccountLedger).filter(
+            AccountLedger.branch_id == branch_id,
+            AccountLedger.name == l["name"]
+        ).first()
+        if not existing_l:
+            ledger = AccountLedger(**l, branch_id=branch_id)
+            db.add(ledger)
+            ledger_count += 1
 
     db.commit()
 
     return {
         "status": "success",
-        "message": f"Seeded {len(ACCOUNT_GROUPS)} account groups and {ledger_count} ledgers for this branch.",
-        "groups_created": len(ACCOUNT_GROUPS),
+        "message": f"Seeded {groups_created} account groups and {ledger_count} ledgers for this branch.",
+        "groups_created": groups_created,
         "ledgers_created": ledger_count,
     }
+
+
+# ── Seed Chart of Accounts Endpoint ───────────────────────────────────────────
+@router.post("/seed-chart-of-accounts")
+def seed_chart_of_accounts(
+    db: Session = Depends(get_db),
+    branch_id: int = Depends(get_branch_id),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Seed a standard hospitality Chart of Accounts for the current branch.
+    Safe to call: skips existing groups/ledgers and adds any missing ones.
+    """
+    return seed_chart_of_accounts_for_branch(db=db, branch_id=branch_id)
 
 
 @router.post("/migrate-staff-loans-ledger")

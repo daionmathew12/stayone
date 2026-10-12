@@ -1985,7 +1985,15 @@ def update_checkout(
                 checkout_id=checkout.id,
                 room_total=checkout.room_total or 0.0,
                 food_total=checkout.food_total or 0.0,
-                service_total=checkout.service_total or 0.0,
+                service_total=float(
+                    (checkout.service_total or 0.0) +
+                    (checkout.consumables_charges or 0.0) +
+                    (checkout.inventory_charges or 0.0) +
+                    (checkout.asset_damage_charges or 0.0) +
+                    (checkout.key_card_fee or 0.0) +
+                    (checkout.late_checkout_fee or 0.0) +
+                    (checkout.tips_gratuity or 0.0)
+                ),
                 package_total=checkout.package_total or 0.0,
                 tax_amount=checkout.tax_amount or 0.0,
                 discount_amount=checkout.discount_amount or 0.0,

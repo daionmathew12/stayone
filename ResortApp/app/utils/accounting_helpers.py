@@ -24,16 +24,36 @@ def is_bank_ledger_method(method: str) -> bool:
 
 
 def find_ledger_by_name(db: Session, name: str, branch_id: int, module: Optional[str] = None) -> Optional[AccountLedger]:
-    """Find ledger by name and branch (including global ledgers), optionally filtered by module"""
+    """Find ledger by name and branch (including global ledgers), optionally filtered by module with fallback"""
     from sqlalchemy import or_, func
-    query = db.query(AccountLedger).filter(
+    base_query = db.query(AccountLedger).filter(
         func.lower(AccountLedger.name) == name.lower(),
         or_(AccountLedger.branch_id == branch_id, AccountLedger.branch_id == None),
         AccountLedger.is_active == True
     )
     if module:
-        query = query.filter(AccountLedger.module == module)
-    return query.first()
+        ledger = base_query.filter(func.lower(AccountLedger.module) == module.lower()).first()
+        if ledger:
+            return ledger
+    return base_query.first()
+
+
+def ensure_chart_of_accounts(db: Session, branch_id: int):
+    """
+    Ensure the standard chart of accounts exists for the branch.
+    If no groups or ledgers exist, seeds them automatically.
+    """
+    if not branch_id:
+        return
+    from app.models.account import AccountGroup, AccountLedger
+    try:
+        existing_groups = db.query(AccountGroup).filter(AccountGroup.branch_id == branch_id).count()
+        existing_ledgers = db.query(AccountLedger).filter(AccountLedger.branch_id == branch_id).count()
+        if existing_groups == 0 or existing_ledgers == 0:
+            from app.api.account import seed_chart_of_accounts_for_branch
+            seed_chart_of_accounts_for_branch(db, branch_id)
+    except Exception as e:
+        print(f"[WARNING] Failed to ensure chart of accounts for branch {branch_id}: {e}")
 
 
 def create_advance_payment_journal_entry(
@@ -51,6 +71,7 @@ def create_advance_payment_journal_entry(
     Debit: Cash in Hand / Bank Account
     Credit: Advance Deposits - Guests (Current Asset/Liability)
     """
+    ensure_chart_of_accounts(db, branch_id)
     if is_bank_ledger_method(payment_method):
         payment_ledger = find_ledger_by_name(db, "Bank Account - Main", branch_id=branch_id, module="General")
     else:
@@ -112,6 +133,7 @@ def create_booking_journal_entry(
     Debit: Accounts Receivable
     Credit: Room Tariff Income, CGST Payable, SGST Payable
     """
+    ensure_chart_of_accounts(db, branch_id)
     guest_receivable = find_ledger_by_name(db, "Accounts Receivable", branch_id=branch_id, module="Booking")
     room_revenue = find_ledger_by_name(db, "Room Tariff Income", branch_id=branch_id, module="Booking")
     output_cgst = find_ledger_by_name(db, "CGST Payable", branch_id=branch_id, module="GST")
@@ -184,6 +206,7 @@ def create_purchase_journal_entry(
     Debit: CGST Input Credit, SGST Input Credit
     Credit: Accounts Payable
     """
+    ensure_chart_of_accounts(db, branch_id)
     inventory_stock = find_ledger_by_name(db, "Inventory Stock", branch_id=branch_id, module="Inventory")
     equipment_asset = find_ledger_by_name(db, "Equipment", branch_id=branch_id, module="General")
     furniture_asset = find_ledger_by_name(db, "Furniture & Fixtures", branch_id=branch_id, module="General")
@@ -412,6 +435,7 @@ def create_service_journal_entry(
     Debit: Cash in Hand / Bank Account / Accounts Receivable
     Credit: Spa & Wellness Revenue, CGST Payable, SGST Payable
     """
+    ensure_chart_of_accounts(db, branch_id)
     # Determine debit ledger based on payment status
     if payment_method:
         if is_bank_ledger_method(payment_method):
@@ -483,15 +507,20 @@ def create_complete_checkout_journal_entry(
     payment_ledger_id: Optional[int] = None,
     created_by: Optional[int] = None,
     advance_amount: float = 0.0,
-    refund_amount: float = 0.0
-) -> int:
+    refund_amount: float = 0.0,
+    **kwargs
+) -> Optional[int]:
     """
-    Comprehensive guest checkout entry
+    Comprehensive guest checkout entry with automatic Chart of Accounts verification
+    and double-entry residual balancing.
     """
+    ensure_chart_of_accounts(db, branch_id)
+
     room_revenue = find_ledger_by_name(db, "Room Tariff Income", branch_id=branch_id, module="Booking")
     food_revenue = find_ledger_by_name(db, "Restaurant Revenue", branch_id=branch_id, module="Food")
     service_revenue = find_ledger_by_name(db, "Spa & Wellness Revenue", branch_id=branch_id, module="Service")
     package_revenue = find_ledger_by_name(db, "Package Revenue", branch_id=branch_id, module="Booking")
+    misc_income = find_ledger_by_name(db, "Miscellaneous Income", branch_id=branch_id, module="General")
     output_cgst = find_ledger_by_name(db, "CGST Payable", branch_id=branch_id, module="GST")
     output_sgst = find_ledger_by_name(db, "SGST Payable", branch_id=branch_id, module="GST")
     discount_ledger = find_ledger_by_name(db, "Discount Allowed", branch_id=branch_id, module="Expense")
@@ -506,6 +535,10 @@ def create_complete_checkout_journal_entry(
         from app.models.account import AccountLedger
         payment_ledger = db.query(AccountLedger).get(payment_ledger_id)
 
+    # Fallback to any cash/bank ledger if specific one was not matched
+    if not payment_ledger:
+        payment_ledger = find_ledger_by_name(db, "Cash in Hand", branch_id=branch_id) or find_ledger_by_name(db, "Bank Account - Main", branch_id=branch_id)
+
     if not payment_ledger:
         print(f"[WARNING] Payment ledger not found for checkout {checkout_id}")
         return None
@@ -514,22 +547,64 @@ def create_complete_checkout_journal_entry(
     
     # Final Payment (if guest pays)
     if grand_total > 0:
-        lines.append(JournalEntryLineCreateInEntry(debit_ledger_id=payment_ledger.id, credit_ledger_id=None, amount=grand_total, description=f"Final Payment - {guest_name} (Room {room_number})"))
+        lines.append(JournalEntryLineCreateInEntry(
+            debit_ledger_id=payment_ledger.id,
+            credit_ledger_id=None,
+            amount=round(grand_total, 2),
+            description=f"Final Payment - {guest_name} (Room {room_number})"
+        ))
     
-    if room_total > 0 and room_revenue: lines.append(JournalEntryLineCreateInEntry(debit_ledger_id=None, credit_ledger_id=room_revenue.id, amount=room_total, description="Room Tariff Income"))
-    if food_total > 0 and food_revenue: lines.append(JournalEntryLineCreateInEntry(debit_ledger_id=None, credit_ledger_id=food_revenue.id, amount=food_total, description="Restaurant Revenue"))
-    if service_total > 0 and service_revenue: lines.append(JournalEntryLineCreateInEntry(debit_ledger_id=None, credit_ledger_id=service_revenue.id, amount=service_total, description="Spa & Wellness Revenue"))
-    if package_total > 0 and package_revenue: lines.append(JournalEntryLineCreateInEntry(debit_ledger_id=None, credit_ledger_id=package_revenue.id, amount=package_total, description="Package Revenue"))
-    if tax_amount > 0 and output_cgst: lines.append(JournalEntryLineCreateInEntry(debit_ledger_id=None, credit_ledger_id=output_cgst.id, amount=tax_amount/2, description="CGST Payable"))
-    if tax_amount > 0 and output_sgst: lines.append(JournalEntryLineCreateInEntry(debit_ledger_id=None, credit_ledger_id=output_sgst.id, amount=tax_amount/2, description="SGST Payable"))
-    if discount_amount > 0 and discount_ledger: lines.append(JournalEntryLineCreateInEntry(debit_ledger_id=discount_ledger.id, credit_ledger_id=None, amount=discount_amount, description="Discount Allowed"))
+    if room_total > 0 and room_revenue:
+        lines.append(JournalEntryLineCreateInEntry(debit_ledger_id=None, credit_ledger_id=room_revenue.id, amount=round(room_total, 2), description="Room Tariff Income"))
+    if food_total > 0 and food_revenue:
+        lines.append(JournalEntryLineCreateInEntry(debit_ledger_id=None, credit_ledger_id=food_revenue.id, amount=round(food_total, 2), description="Restaurant Revenue"))
+    if service_total > 0 and service_revenue:
+        lines.append(JournalEntryLineCreateInEntry(debit_ledger_id=None, credit_ledger_id=service_revenue.id, amount=round(service_total, 2), description="Spa & Wellness Revenue"))
+    if package_total > 0 and package_revenue:
+        lines.append(JournalEntryLineCreateInEntry(debit_ledger_id=None, credit_ledger_id=package_revenue.id, amount=round(package_total, 2), description="Package Revenue"))
+    if tax_amount > 0 and output_cgst and output_sgst:
+        cgst_amt = round(tax_amount / 2, 2)
+        sgst_amt = round(tax_amount - cgst_amt, 2)
+        lines.append(JournalEntryLineCreateInEntry(debit_ledger_id=None, credit_ledger_id=output_cgst.id, amount=cgst_amt, description="CGST Payable"))
+        lines.append(JournalEntryLineCreateInEntry(debit_ledger_id=None, credit_ledger_id=output_sgst.id, amount=sgst_amt, description="SGST Payable"))
+    elif tax_amount > 0 and output_cgst:
+        lines.append(JournalEntryLineCreateInEntry(debit_ledger_id=None, credit_ledger_id=output_cgst.id, amount=round(tax_amount, 2), description="GST Payable"))
+    if discount_amount > 0 and discount_ledger:
+        lines.append(JournalEntryLineCreateInEntry(debit_ledger_id=discount_ledger.id, credit_ledger_id=None, amount=round(discount_amount, 2), description="Discount Allowed"))
     
     # Advance Adjustment (Utilized part only in the main entry)
     total_bill = room_total + food_total + service_total + package_total + tax_amount - discount_amount
     utilized_advance = min(advance_amount, total_bill) if advance_amount > 0 else 0
     
     if utilized_advance > 0 and advance_ledger:
-        lines.append(JournalEntryLineCreateInEntry(debit_ledger_id=advance_ledger.id, credit_ledger_id=None, amount=utilized_advance, description="Advance Adjusted"))
+        lines.append(JournalEntryLineCreateInEntry(debit_ledger_id=advance_ledger.id, credit_ledger_id=None, amount=round(utilized_advance, 2), description="Advance Adjusted"))
+
+    # ── Double-entry Auto-balancing ───────────────────────────────────────
+    # Accounts for extra charges (consumables, damages, minibar) or rounding
+    total_debits = sum(line.amount for line in lines if line.debit_ledger_id)
+    total_credits = sum(line.amount for line in lines if line.credit_ledger_id)
+    diff = round(total_debits - total_credits, 2)
+
+    if diff > 0.01:
+        # Debits exceed Credits: Credit the difference to Miscellaneous Income
+        target_income = misc_income or service_revenue or room_revenue
+        if target_income:
+            lines.append(JournalEntryLineCreateInEntry(
+                debit_ledger_id=None,
+                credit_ledger_id=target_income.id,
+                amount=diff,
+                description="Miscellaneous Charges / Round-off"
+            ))
+    elif diff < -0.01:
+        # Credits exceed Debits: Debit the difference to Discount Allowed
+        target_discount = discount_ledger or payment_ledger
+        if target_discount:
+            lines.append(JournalEntryLineCreateInEntry(
+                debit_ledger_id=target_discount.id,
+                credit_ledger_id=None,
+                amount=abs(diff),
+                description="Discount / Round-off Adjustment"
+            ))
 
     main_entry = JournalEntryCreate(
         entry_date=datetime.now(timezone.utc),
@@ -547,13 +622,13 @@ def create_complete_checkout_journal_entry(
             JournalEntryLineCreateInEntry(
                 debit_ledger_id=advance_ledger.id,
                 credit_ledger_id=None,
-                amount=refund_amount,
+                amount=round(refund_amount, 2),
                 description=f"Refund from Advance - {guest_name}"
             ),
             JournalEntryLineCreateInEntry(
                 debit_ledger_id=None,
                 credit_ledger_id=payment_ledger.id,
-                amount=refund_amount,
+                amount=round(refund_amount, 2),
                 description=f"Refund paid via {payment_method}"
             )
         ]
