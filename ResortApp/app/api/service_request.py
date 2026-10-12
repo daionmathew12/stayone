@@ -82,8 +82,8 @@ def get_service_requests(
     Returns a list of dicts (not ServiceRequestOut) to support both service requests and checkout requests.
     """
     # Authorization logic: Only admins/managers see everything; staff see assigned or unassigned tasks
-    user_role = current_user.role.name.lower() if current_user.role else "guest"
-    is_admin = user_role in ["admin", "manager", "owner", "superadmin"] or getattr(current_user, 'is_superadmin', False)
+    user_role = (current_user.role.name.lower() if current_user.role else "guest").strip()
+    is_admin = getattr(current_user, 'is_superadmin', False) or any(k in user_role for k in ["admin", "manager", "owner", "superadmin"])
     
     current_employee_id = None
     if current_user.employee:
@@ -464,8 +464,8 @@ def update_service_request(
     branch_id: Optional[int] = Depends(get_branch_id)
 ):
     # Authorization logic
-    user_role = current_user.role.name.lower() if current_user.role else "guest"
-    is_admin = user_role in ["admin", "manager", "owner", "superadmin"] or getattr(current_user, 'is_superadmin', False)
+    user_role = (current_user.role.name.lower() if current_user.role else "guest").strip()
+    is_admin = getattr(current_user, 'is_superadmin', False) or any(k in user_role for k in ["admin", "manager", "owner", "superadmin"])
     current_employee_id = current_user.employee.id if current_user.employee else None
     
     print(f"[DEBUG-API] Updating ServiceRequest {request_id}. Status: {update.status}, Billing: {update.billing_status}, Branch: {branch_id}")

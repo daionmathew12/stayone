@@ -131,8 +131,8 @@ def mark_attendance(record: AttendanceCreate, db: Session = Depends(get_db), cur
 
 @router.post("/log-work", response_model=WorkingLogRecord)
 def log_working_hours(log: WorkingLogCreate, db: Session = Depends(get_db), current_user: User = Depends(get_current_user), branch_id: int = Depends(get_branch_id)):
-    # Restrict to admins/managers
-    if current_user.role.name.lower() not in ['super_admin', 'admin', 'manager']:
+    role_lower = (current_user.role.name.lower() if current_user.role else "").strip()
+    if not (getattr(current_user, 'is_superadmin', False) or any(k in role_lower for k in ['super_admin', 'superadmin', 'admin', 'manager', 'owner'])):
         raise HTTPException(status_code=403, detail="Only admins or managers can log work hours manually.")
 
     data = log.model_dump()
@@ -421,8 +421,8 @@ def update_working_log(log_id: int, log_update: WorkingLogUpdate, db: Session = 
 @router.post("/work-logs/{log_id}/approve", response_model=WorkingLogRecord)
 def approve_working_log_tasks(log_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     # Restrict to admins/managers (handle all common role name formats)
-    _role = current_user.role.name.lower().replace(' ', '_').replace('-', '_')
-    if _role not in ['super_admin', 'superadmin', 'admin', 'manager']:
+    _role = (current_user.role.name.lower() if current_user.role else "").replace(' ', '_').replace('-', '_')
+    if not (getattr(current_user, "is_superadmin", False) or any(k in _role for k in ['super_admin', 'superadmin', 'admin', 'manager', 'owner'])):
         raise HTTPException(status_code=403, detail="Only admins or managers can approve tasks.")
         
     log = db.query(WorkingLog).filter(WorkingLog.id == log_id).first()

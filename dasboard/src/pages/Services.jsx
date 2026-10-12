@@ -300,7 +300,7 @@ const Services = () => {
   // Fetch service requests
   const fetchServiceRequests = async () => {
     try {
-      const res = await api.get("/service-requests?limit=100");
+      const res = await api.get("/service-requests?limit=100&include_checkout_requests=true");
       setServiceRequests(res.data || []);
     } catch (error) {
       console.error("Failed to fetch service requests:", error);
