@@ -17,7 +17,7 @@ from app.models.booking import Booking, BookingRoom
 from app.utils.branch_scope import get_branch_id
 from app.models.user import User
 
-from app.models.room import Room
+from app.models.room import Room, RoomType
 from app.models.Package import Package, PackageBooking, PackageBookingRoom
 from app.schemas.booking import BookingCreate, BookingOut, BookingConfirm, BookingUpdate
 from app.models.checkout import Checkout
@@ -982,9 +982,6 @@ def create_booking(
         except Exception as e:
             print(f"Warning: Could not create/link guest user: {str(e)}")
     
-    from app.models.room import RoomType
-    
-    from app.models.Package import Package, PackageBooking, PackageBookingRoom
     active_statuses = ["booked", "checked-in", "checked_in", "confirmed", "occupied"]
 
     # 1. SOFT ALLOCATION LOGIC (Booking by Type)
@@ -1068,7 +1065,6 @@ def create_booking(
         ).count()
         
         # Count 3: Soft allocations (by type) that don't have physical rooms yet
-        from sqlalchemy import func
         soft_overlaps_sum = db.query(func.sum(Booking.num_rooms)).filter(
             Booking.room_type_id == room_type.id,
             Booking.branch_id == branch_id,
