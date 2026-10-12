@@ -41,15 +41,16 @@ def find_ledger_by_name(db: Session, name: str, branch_id: int, module: Optional
 def ensure_chart_of_accounts(db: Session, branch_id: int):
     """
     Ensure the standard chart of accounts exists for the branch.
-    If no groups or ledgers exist, seeds them automatically.
+    If no groups or key ledgers exist, seeds them automatically.
     """
     if not branch_id:
         return
     from app.models.account import AccountGroup, AccountLedger
     try:
         existing_groups = db.query(AccountGroup).filter(AccountGroup.branch_id == branch_id).count()
-        existing_ledgers = db.query(AccountLedger).filter(AccountLedger.branch_id == branch_id).count()
-        if existing_groups == 0 or existing_ledgers == 0:
+        has_cash = db.query(AccountLedger).filter(AccountLedger.branch_id == branch_id, AccountLedger.name == "Cash in Hand").first()
+        has_room = db.query(AccountLedger).filter(AccountLedger.branch_id == branch_id, AccountLedger.name == "Room Tariff Income").first()
+        if existing_groups == 0 or not has_cash or not has_room:
             from app.api.account import seed_chart_of_accounts_for_branch
             seed_chart_of_accounts_for_branch(db, branch_id)
     except Exception as e:
