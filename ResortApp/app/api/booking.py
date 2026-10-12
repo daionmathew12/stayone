@@ -984,8 +984,7 @@ def create_booking(
     
     from app.models.room import RoomType
     
-    from app.models.Package import Package
-    from app.models.packages import PackageBooking, PackageBookingRoom
+    from app.models.Package import Package, PackageBooking, PackageBookingRoom
     active_statuses = ["booked", "checked-in", "checked_in", "confirmed", "occupied"]
 
     # 1. SOFT ALLOCATION LOGIC (Booking by Type)
@@ -1449,7 +1448,7 @@ def check_in_booking(
                         
                         # Availability Guard: Check if room is already booked by someone else for these dates
                         # (Already imported BR, B above)
-                        from app.models.packages import PackageBooking, PackageBookingRoom
+                        from app.models.Package import PackageBooking, PackageBookingRoom
                         active_check_statuses = ["booked", "checked-in", "checked_in", "confirmed", "occupied"]
 
                         conflict = db.query(BR).join(B).filter(
