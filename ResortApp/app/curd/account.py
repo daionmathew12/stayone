@@ -206,31 +206,36 @@ def delete_account_ledger(db: Session, ledger_id: int, branch_id: int) -> bool:
 
 
 # Journal Entry CRUD
-def generate_entry_number(db: Session, branch_id: int) -> str:
-
-    """Generate unique journal entry number"""
+def generate_entry_number(db: Session, branch_id: Optional[int] = None) -> str:
+    """Generate globally unique journal entry number: JE-YYYY-MM-XXXX"""
     today = datetime.now(timezone.utc).date()
     year = today.year
     month = today.month
-    
-    # Get count of entries this month
-    count = db.query(JournalEntry).filter(
-        JournalEntry.branch_id == branch_id,
-        func.extract('year', JournalEntry.entry_date) == year,
-        func.extract('month', JournalEntry.entry_date) == month
-    ).count()
+    prefix = f"JE-{year}-{str(month).zfill(2)}-"
 
-    
-    # Handle gaps from deletions: Ensure uniqueness
+    # Find the latest journal entry number for this month across all branches
+    last_entry = db.query(JournalEntry).filter(
+        JournalEntry.entry_number.like(f"{prefix}%")
+    ).order_by(JournalEntry.entry_number.desc()).first()
+
+    start_seq = 1
+    if last_entry and last_entry.entry_number:
+        try:
+            parts = last_entry.entry_number.split("-")
+            start_seq = int(parts[-1]) + 1
+        except (ValueError, IndexError):
+            start_seq = 1
+
+    # Safety check loop: Guarantee absolute uniqueness across the entire table
     while True:
-        entry_number = f"JE-{year}-{str(month).zfill(2)}-{str(count + 1).zfill(4)}"
-        exists = db.query(JournalEntry).filter(JournalEntry.entry_number == entry_number, JournalEntry.branch_id == branch_id).first()
+        entry_number = f"{prefix}{str(start_seq).zfill(4)}"
+        exists = db.query(JournalEntry).filter(
+            JournalEntry.entry_number == entry_number
+        ).first()
 
         if not exists:
-            break
-        count += 1
-    
-    return entry_number
+            return entry_number
+        start_seq += 1
 
 
 def create_journal_entry(db: Session, entry: JournalEntryCreate, branch_id: int, created_by: Optional[int] = None, commit: bool = True) -> JournalEntry:

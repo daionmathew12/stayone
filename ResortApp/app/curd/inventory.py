@@ -662,8 +662,11 @@ def update_purchase_status(db: Session, purchase_id: int, status: str, current_u
                 )
 
         except Exception as e:
+            db.rollback()
             import traceback
             print(f"Warning: Could not create journal entry for purchase {purchase.id}: {str(e)}\n{traceback.format_exc()}")
+            from fastapi import HTTPException
+            raise HTTPException(status_code=500, detail=f"Failed to record journal entry for purchase: {str(e)}")
 
     # CASE 2: Transition FROM RECEIVED TO CANCELLED (Reverse Stock)
     elif old_status == "received" and new_status == "cancelled":

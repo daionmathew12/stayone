@@ -1360,7 +1360,7 @@ def create_purchase_payment(
         )
 
         
-        journal_entry = create_journal_entry(db, entry, current_user.id)
+        journal_entry = create_journal_entry(db, entry, branch_id=branch_id, created_by=current_user.id)
         
         # Update purchase payment status
         # This is a simplified logic; ideally we sum up all payments
