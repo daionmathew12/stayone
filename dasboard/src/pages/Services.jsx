@@ -80,7 +80,7 @@ const InventoryRecoveryModal = ({ assignedServiceId, requestId, onClose, onCompl
         setLocations(invLocs);
         
         // Initialize return locations with default warehouse
-        const defaultLoc = invLocs.find(l => l.location_type === 'WAREHOUSE' || l.location_type === 'CENTRAL_WAREHOUSE');
+        const defaultLoc = invLocs.find(l => l.location_type === 'MAIN_INVENTORY' || l.location_type === 'WAREHOUSE' || l.location_type === 'CENTRAL_WAREHOUSE' || l.location_type === 'BRANCH_STORE') || invLocs[0];
         const initialLocs = {};
         items.forEach(item => {
           if (defaultLoc) initialLocs[item.id] = defaultLoc.id;

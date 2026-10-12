@@ -732,14 +732,14 @@ const AddExtraAllocationModal = ({
     if (inventoryLocations.length > 0) {
       const mainWarehouse = inventoryLocations.find((loc) => {
         const type = String(loc.location_type || "").toUpperCase();
+        const name = String(loc.name || "").toLowerCase();
         return (
-          (loc.is_inventory_point === true &&
-            (type === "CENTRAL_WAREHOUSE" ||
-              type === "WAREHOUSE" ||
-              type === "BRANCH_STORE")) ||
+          type === "MAIN_INVENTORY" ||
           type === "CENTRAL_WAREHOUSE" ||
           type === "WAREHOUSE" ||
-          type === "BRANCH_STORE"
+          type === "BRANCH_STORE" ||
+          name.includes("main") ||
+          (loc.is_inventory_point === true && (type.includes("STORE") || type.includes("INVENTORY") || type.includes("WAREHOUSE")))
         );
       });
       return mainWarehouse ? mainWarehouse.id : inventoryLocations[0].id;
@@ -949,16 +949,16 @@ const AddExtraAllocationModal = ({
       // Find main warehouse
       const mainWarehouse = inventoryLocations.find((loc) => {
         const type = String(loc.location_type || "").toUpperCase();
+        const name = String(loc.name || "").toLowerCase();
         return (
-          (loc.is_inventory_point === true &&
-            (type === "CENTRAL_WAREHOUSE" ||
-              type === "WAREHOUSE" ||
-              type === "BRANCH_STORE")) ||
+          type === "MAIN_INVENTORY" ||
           type === "CENTRAL_WAREHOUSE" ||
           type === "WAREHOUSE" ||
-          type === "BRANCH_STORE"
+          type === "BRANCH_STORE" ||
+          name.includes("main") ||
+          (loc.is_inventory_point === true && (type.includes("STORE") || type.includes("INVENTORY") || type.includes("WAREHOUSE")))
         );
-      });
+      }) || inventoryLocations.find(loc => loc.is_inventory_point === true) || inventoryLocations[0];
 
       if (!mainWarehouse) {
         showBannerMessage(
@@ -1855,7 +1855,7 @@ const AddExtraAllocationModal = ({
                               {inventoryLocations
                                 .filter((loc) => {
                                   const type = String(loc.location_type || "").toUpperCase();
-                                  return (loc.is_inventory_point === true) || ["CENTRAL_WAREHOUSE", "WAREHOUSE", "BRANCH_STORE", "STORE", "STORAGE"].includes(type);
+                                  return (loc.is_inventory_point === true) || ["MAIN_INVENTORY", "CENTRAL_WAREHOUSE", "WAREHOUSE", "BRANCH_STORE", "STORE", "STORAGE"].includes(type);
                                 })
                                 .map((loc) => {
                                   const stock = item.item_id ? (itemStockCache[item.item_id]?.[loc.id]) : null;
@@ -5954,24 +5954,16 @@ const Bookings = () => {
           // Find main warehouse. Prefer inventory points, but fall back to any central/warehouse type.
           let mainWarehouse = inventoryLocations.find((loc) => {
             const type = String(loc.location_type || "").toUpperCase();
+            const name = String(loc.name || "").toLowerCase();
             return (
-              loc.is_inventory_point === true &&
-              (type === "CENTRAL_WAREHOUSE" ||
-                type === "WAREHOUSE" ||
-                type === "BRANCH_STORE")
+              type === "MAIN_INVENTORY" ||
+              type === "CENTRAL_WAREHOUSE" ||
+              type === "WAREHOUSE" ||
+              type === "BRANCH_STORE" ||
+              name.includes("main") ||
+              (loc.is_inventory_point === true && (type.includes("STORE") || type.includes("INVENTORY") || type.includes("WAREHOUSE")))
             );
-          });
-          if (!mainWarehouse) {
-            mainWarehouse =
-              inventoryLocations.find((loc) => {
-                const type = String(loc.location_type || "").toUpperCase();
-                return (
-                  type === "CENTRAL_WAREHOUSE" ||
-                  type === "WAREHOUSE" ||
-                  type === "BRANCH_STORE"
-                );
-              }) || null;
-          }
+          }) || inventoryLocations.find((loc) => loc.is_inventory_point === true) || inventoryLocations[0] || null;
 
           if (!mainWarehouse) {
             console.warn(
