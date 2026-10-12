@@ -4558,44 +4558,62 @@ const Bookings = () => {
         (p) => p.id === parseInt(packageBookingForm.package_id),
       );
 
+      const isWholeProperty = selectedPackage?.booking_type === "whole_property";
+
+      const requestedCheckIn = new Date(packageBookingForm.check_in);
+      const requestedCheckOut = new Date(packageBookingForm.check_out);
+
+      const checkOverlap = (bIn, bOut) => {
+        return requestedCheckIn < new Date(bOut) && requestedCheckOut > new Date(bIn);
+      };
+
+      const isActiveStatus = (status) => {
+        const s = status?.toLowerCase().replace(/_/g, "-");
+        return s === "booked" || s === "checked-in" || s === "confirmed" || s === "occupied";
+      };
+
+      const bookingList = calendarBookings && calendarBookings.length > 0 ? calendarBookings : bookings;
+
+      if (isWholeProperty) {
+        // If whole property: ANY active booking (regular or package) overlapping the dates means the property is NOT available!
+        const hasAnyConflict = bookingList.some((b) => {
+          return isActiveStatus(b.status) && checkOverlap(b.check_in, b.check_out);
+        });
+
+        if (hasAnyConflict) {
+          setPackageRooms([]);
+          setPackageBookingForm((prev) => ({
+            ...prev,
+            room_ids: [],
+          }));
+          return;
+        } else {
+          // All rooms available
+          setPackageRooms(allRooms);
+          setPackageBookingForm((prev) => ({
+            ...prev,
+            room_ids: allRooms.map((r) => r.id),
+          }));
+          return;
+        }
+      }
+
+      // If NOT whole property:
       let availableRooms = allRooms.filter((room) => {
-        // Check if room has any conflicting bookings
-        // Only consider bookings with status "booked" or "checked-in" as conflicts
-        const hasConflict = bookings.some((booking) => {
-          const normalizedStatus = booking.status
-            ?.toLowerCase()
-            .replace(/_/g, "-");
-          // Only check for "booked" or "checked-in" status - all other statuses are available
-          if (
-            normalizedStatus !== "booked" &&
-            normalizedStatus !== "checked-in"
-          )
-            return false;
+        const hasConflict = bookingList.some((booking) => {
+          if (!isActiveStatus(booking.status)) return false;
+          if (!checkOverlap(booking.check_in, booking.check_out)) return false;
 
-          const bookingCheckIn = new Date(booking.check_in);
-          const bookingCheckOut = new Date(booking.check_out);
-          const requestedCheckIn = new Date(packageBookingForm.check_in);
-          const requestedCheckOut = new Date(packageBookingForm.check_out);
-
-          // Check if room is part of this booking
+          // Check if this physical room is assigned in the booking
           const isRoomInBooking =
             booking.rooms &&
             booking.rooms.some((r) => {
-              // Handle both nested (r.room.id) and direct (r.id) room references
-              const roomId = r.room?.id || r.id;
+              const roomId = r.room?.id || r.room_id || r.id;
               return roomId === room.id;
             });
-          if (!isRoomInBooking) return false;
-
-          // Check for date overlap
-          return (
-            requestedCheckIn < bookingCheckOut &&
-            requestedCheckOut > bookingCheckIn
-          );
+          return isRoomInBooking;
         });
 
-        // If there are no conflicting bookings for the selected dates, room is available
-        // Don't filter by room.status - availability is determined by booking conflicts, not status field
         return !hasConflict;
       });
 
@@ -4613,28 +4631,9 @@ const Bookings = () => {
           return allowedRoomTypes.includes(roomType);
         });
       }
-      // For whole_property, availableRooms remains all available rooms (no filtering)
 
       // Update package rooms separately
       setPackageRooms(availableRooms);
-
-      // If whole_property, automatically select all available rooms
-      if (
-        selectedPackage &&
-        selectedPackage.booking_type === "whole_property" &&
-        availableRooms.length > 0
-      ) {
-        setPackageBookingForm((prev) => ({
-          ...prev,
-          room_ids: availableRooms.map((r) => r.id),
-        }));
-      } else if (
-        selectedPackage &&
-        selectedPackage.booking_type === "room_type"
-      ) {
-        // For room_type, clear selection if package changed or dates changed
-        // User will manually select rooms
-      }
     } else if (!packageBookingForm.check_in || !packageBookingForm.check_out) {
       // If no dates selected, show all available rooms
       setPackageRooms(allRooms.filter((r) => r.status === "Available"));
@@ -4645,6 +4644,7 @@ const Bookings = () => {
     packageBookingForm.package_id,
     allRooms,
     bookings,
+    calendarBookings,
     packages,
   ]);
 
@@ -4910,10 +4910,10 @@ const Bookings = () => {
         // Use all available rooms from packageRooms (already filtered by availability)
         const availableRoomIds = packageRooms.map((r) => r.id);
 
-        if (availableRoomIds.length === 0) {
+        if (availableRoomIds.length === 0 || (allRooms.length > 0 && availableRoomIds.length < allRooms.length)) {
           showBannerMessage(
             "error",
-            "No rooms are available for the selected dates.",
+            "The whole property is not available for the selected dates because existing bookings are present.",
           );
           setIsSubmitting(false);
           return;
@@ -4922,8 +4922,15 @@ const Bookings = () => {
         // Use all available rooms for whole_property
         finalRoomIds = availableRoomIds;
       } else {
-        // Room selection validation removed for soft allocation
         finalRoomIds = packageBookingForm.room_ids;
+        if (!finalRoomIds || finalRoomIds.length === 0) {
+          showBannerMessage(
+            "error",
+            "Please select at least one room for this package.",
+          );
+          setIsSubmitting(false);
+          return;
+        }
       }
 
       // --- CAPACITY VALIDATION ---

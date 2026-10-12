@@ -2234,48 +2234,57 @@ export default function App() {
         const requestedCheckIn = new Date(packageBookingData.check_in);
         const requestedCheckOut = new Date(packageBookingData.check_out);
 
+        const checkOverlap = (bIn, bOut) => {
+            return requestedCheckIn < new Date(bOut) && requestedCheckOut > new Date(bIn);
+        };
+
+        const isActiveStatus = (status) => {
+            const s = status?.toLowerCase().replace(/_/g, '-');
+            return s === "booked" || s === "checked-in" || s === "confirmed" || s === "occupied";
+        };
+
+        if (isWholeProperty) {
+            // For whole property: ANY active booking in this branch blocks the whole property
+            const hasAnyBookingConflict = bookings.some(b => {
+                if (selectedPackage.branch_id && b.branch_id && b.branch_id !== selectedPackage.branch_id) return false;
+                return isActiveStatus(b.status) && checkOverlap(b.check_in, b.check_out);
+            });
+            const hasAnyPkgConflict = packageBookings.some(pb => {
+                if (selectedPackage.branch_id && pb.branch_id && pb.branch_id !== selectedPackage.branch_id) return false;
+                return isActiveStatus(pb.status) && checkOverlap(pb.check_in, pb.check_out);
+            });
+
+            roomsToCheck.forEach(room => {
+                availability[room.id] = !hasAnyBookingConflict && !hasAnyPkgConflict;
+            });
+            return availability;
+        }
+
         roomsToCheck.forEach(room => {
             // Check conflicts with regular bookings
             const hasRegularConflict = bookings.some(booking => {
-                const normalizedStatus = booking.status?.toLowerCase().replace(/_/g, '-');
-                // Only check for "booked" or "checked-in" status
-                if (normalizedStatus !== "booked" && normalizedStatus !== "checked-in") return false;
-
-                const bookingCheckIn = new Date(booking.check_in);
-                const bookingCheckOut = new Date(booking.check_out);
+                if (!isActiveStatus(booking.status)) return false;
+                if (!checkOverlap(booking.check_in, booking.check_out)) return false;
 
                 // Check if this room is part of the booking
                 const isRoomInBooking = booking.rooms && booking.rooms.some(r => {
-                    // For regular bookings, r.id is the room.id directly
                     const roomId = r.room?.id || r.id;
                     return roomId === room.id;
                 });
-                if (!isRoomInBooking) return false;
-
-                // Check for date overlap
-                return (requestedCheckIn < bookingCheckOut && requestedCheckOut > bookingCheckIn);
+                return isRoomInBooking;
             });
 
             // Check conflicts with package bookings
             const hasPackageConflict = packageBookings.some(packageBooking => {
-                const normalizedStatus = packageBooking.status?.toLowerCase().replace(/_/g, '-');
-                // Only check for "booked" or "checked-in" status
-                if (normalizedStatus !== "booked" && normalizedStatus !== "checked-in") return false;
-
-                const bookingCheckIn = new Date(packageBooking.check_in);
-                const bookingCheckOut = new Date(packageBooking.check_out);
+                if (!isActiveStatus(packageBooking.status)) return false;
+                if (!checkOverlap(packageBooking.check_in, packageBooking.check_out)) return false;
 
                 // Check if this room is part of the package booking
                 const isRoomInBooking = packageBooking.rooms && packageBooking.rooms.some(r => {
-                    // For package bookings, r.id is PackageBookingRoom.id, not room.id
-                    // We need to use r.room_id (direct field) or r.room.id (nested object)
                     const roomId = r.room_id || r.room?.id;
                     return roomId === room.id;
                 });
-                if (!isRoomInBooking) return false;
-
-                // Check for date overlap
-                return (requestedCheckIn < bookingCheckOut && requestedCheckOut > bookingCheckIn);
+                return isRoomInBooking;
             });
 
             // Room is available if there are no conflicting bookings (regular or package) for the selected dates
@@ -2470,49 +2479,37 @@ export default function App() {
         let finalRoomIds = packageBookingData.room_ids;
 
         if (isWholeProperty) {
-            // For whole_property, get ALL available rooms from the system
-            // Check availability for all rooms based on selected dates
-            const availableRoomIds = allRooms
-                .filter(room => {
-                    // CRITICAL: Only include rooms from the package's branch
-                    if (selectedPackage.branch_id && room.branch_id !== selectedPackage.branch_id) {
-                        return false;
-                    }
+            const reqIn = new Date(packageBookingData.check_in);
+            const reqOut = new Date(packageBookingData.check_out);
+            const checkOverlap = (bIn, bOut) => reqIn < new Date(bOut) && reqOut > new Date(bIn);
+            const isActiveStatus = (status) => {
+                const s = status?.toLowerCase().replace(/_/g, '-');
+                return s === "booked" || s === "checked-in" || s === "confirmed" || s === "occupied";
+            };
 
-                    // Check if room has any conflicting bookings
-                    const hasConflict = bookings.some(booking => {
-                        const normalizedStatus = booking.status?.toLowerCase().replace(/_/g, '-');
-                        // Only check for "booked" or "checked-in" status
-                        if (normalizedStatus !== "booked" && normalizedStatus !== "checked-in") return false;
+            const hasAnyBookingConflict = bookings.some(b => {
+                if (selectedPackage.branch_id && b.branch_id && b.branch_id !== selectedPackage.branch_id) return false;
+                return isActiveStatus(b.status) && checkOverlap(b.check_in, b.check_out);
+            });
+            const hasAnyPkgConflict = packageBookings.some(pb => {
+                if (selectedPackage.branch_id && pb.branch_id && pb.branch_id !== selectedPackage.branch_id) return false;
+                return isActiveStatus(pb.status) && checkOverlap(pb.check_in, pb.check_out);
+            });
 
-                        const bookingCheckIn = new Date(booking.check_in);
-                        const bookingCheckOut = new Date(booking.check_out);
-                        const requestedCheckIn = new Date(packageBookingData.check_in);
-                        const requestedCheckOut = new Date(packageBookingData.check_out);
-
-                        // Check if this room is part of the booking
-                        const isRoomInBooking = booking.rooms && booking.rooms.some(r => {
-                            const roomId = r.room?.id || r.id;
-                            return roomId === room.id;
-                        });
-                        if (!isRoomInBooking) return false;
-
-                        // Check for date overlap
-                        return (requestedCheckIn < bookingCheckOut && requestedCheckOut > bookingCheckIn);
-                    });
-
-                    return !hasConflict; // Room is available if no conflicts
-                })
-                .map(room => room.id);
-
-            if (availableRoomIds.length === 0) {
-                showBannerMessage("error", "No rooms are available for the selected dates.");
+            if (hasAnyBookingConflict || hasAnyPkgConflict) {
+                showBannerMessage("error", "The whole property is not available for the selected dates because existing bookings are present.");
                 setIsBookingLoading(false);
                 return;
             }
 
-            // Use all available rooms for whole_property
-            finalRoomIds = availableRoomIds;
+            const branchRooms = allRooms.filter(r => !selectedPackage.branch_id || r.branch_id === selectedPackage.branch_id);
+            if (branchRooms.length === 0) {
+                showBannerMessage("error", "No rooms are available for this property.");
+                setIsBookingLoading(false);
+                return;
+            }
+
+            finalRoomIds = branchRooms.map(room => room.id);
         } else {
             // For room_type packages, validate that at least one room is selected
             if (packageBookingData.room_ids.length === 0) {

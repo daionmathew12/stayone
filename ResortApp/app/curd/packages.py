@@ -262,42 +262,148 @@ def book_package(db: Session, booking: PackageBookingCreate, branch_id: int = No
                 detail=f"The number of children ({booking.children}) exceeds the package limit ({selected_package.default_children} children max)."
             )
 
-    # CRITICAL FIX: Check for conflicts BEFORE creating the booking
-    # Only if room_ids are provided
-    if booking.room_ids:
-        for room_id in booking.room_ids:
-            # Check for conflicts with package bookings (simplified overlap check: start1 < end2 AND start2 < end1)
-            package_conflict = (
-                db.query(PackageBookingRoom)
-                .join(PackageBooking)
-                .filter(
-                    PackageBookingRoom.room_id == room_id,
-                    PackageBooking.branch_id == branch_id,
-                    PackageBooking.status.in_(["booked", "checked-in", "checked_in"]),  # Only check for active bookings
-                    PackageBooking.check_in < booking.check_out,
-                    PackageBooking.check_out > booking.check_in
-                )
-                .first()
+    # Active booking statuses to check for overlaps
+    active_statuses = ["booked", "checked-in", "checked_in", "confirmed", "occupied"]
+    from app.models.booking import Booking, BookingRoom
+    from app.models.room import RoomType
+
+    all_branch_rooms = db.query(Room).filter(Room.branch_id == branch_id).all()
+    if not all_branch_rooms:
+        raise HTTPException(status_code=400, detail="No rooms configured for this branch.")
+
+    if is_whole_property:
+        # Whole Property Package: The ENTIRE property must be 100% available.
+        # Check 1: ANY active regular booking in the branch overlapping dates (whether assigned or soft-allocated)
+        reg_conflict = db.query(Booking).filter(
+            Booking.branch_id == branch_id,
+            func.lower(Booking.status).in_(active_statuses),
+            Booking.check_in < booking.check_out,
+            Booking.check_out > booking.check_in
+        ).first()
+        if reg_conflict:
+            raise HTTPException(
+                status_code=400,
+                detail=f"The whole property is not available for the selected dates because an existing booking ({reg_conflict.display_id or reg_conflict.id}) is present."
             )
 
-            # Check for conflicts with regular bookings (simplified overlap check: start1 < end2 AND start2 < end1)
-            from app.models.booking import Booking, BookingRoom
-            regular_conflict = (
-                db.query(BookingRoom)
-                .join(Booking)
-                .filter(
-                    BookingRoom.room_id == room_id,
+        # Check 2: ANY active package booking in the branch overlapping dates
+        pkg_conflict = db.query(PackageBooking).filter(
+            PackageBooking.branch_id == branch_id,
+            func.lower(PackageBooking.status).in_(active_statuses),
+            PackageBooking.check_in < booking.check_out,
+            PackageBooking.check_out > booking.check_in
+        ).first()
+        if pkg_conflict:
+            raise HTTPException(
+                status_code=400,
+                detail=f"The whole property is not available for the selected dates because an existing package booking ({pkg_conflict.display_id or pkg_conflict.id}) is present."
+            )
+
+        # Automatically allocate ALL rooms of the property for whole_property bookings
+        booking.room_ids = [r.id for r in all_branch_rooms]
+
+    else:
+        # Non-whole property package:
+        # Check if an active whole-property package already occupies the property
+        whole_prop_conflict = (
+            db.query(PackageBooking)
+            .join(Package)
+            .filter(
+                PackageBooking.branch_id == branch_id,
+                func.lower(PackageBooking.status).in_(active_statuses),
+                PackageBooking.check_in < booking.check_out,
+                PackageBooking.check_out > booking.check_in,
+                Package.booking_type == "whole_property"
+            )
+            .first()
+        )
+        if whole_prop_conflict:
+            raise HTTPException(
+                status_code=400,
+                detail="The property is fully booked under a Whole Property package for the selected dates."
+            )
+
+        if booking.room_ids:
+            for room_id in booking.room_ids:
+                # Check for conflicts with package bookings
+                package_conflict = (
+                    db.query(PackageBookingRoom)
+                    .join(PackageBooking)
+                    .filter(
+                        PackageBookingRoom.room_id == room_id,
+                        PackageBooking.branch_id == branch_id,
+                        func.lower(PackageBooking.status).in_(active_statuses),
+                        PackageBooking.check_in < booking.check_out,
+                        PackageBooking.check_out > booking.check_in
+                    )
+                    .first()
+                )
+
+                # Check for conflicts with regular bookings (direct assignment)
+                regular_conflict = (
+                    db.query(BookingRoom)
+                    .join(Booking)
+                    .filter(
+                        BookingRoom.room_id == room_id,
+                        Booking.branch_id == branch_id,
+                        func.lower(Booking.status).in_(active_statuses),
+                        Booking.check_in < booking.check_out,
+                        Booking.check_out > booking.check_in
+                    )
+                    .first()
+                )
+
+                if package_conflict or regular_conflict:
+                    room = db.query(Room).filter(Room.id == room_id).first()
+                    raise HTTPException(status_code=400, detail=f"Room {room.number if room else room_id} is not available for the selected dates.")
+
+            # Check for capacity exhaustion due to soft allocations
+            requested_rooms = db.query(Room).filter(Room.id.in_(booking.room_ids), Room.branch_id == branch_id).all()
+            type_requested_counts = {}
+            for r in requested_rooms:
+                if r.room_type_id:
+                    type_requested_counts[r.room_type_id] = type_requested_counts.get(r.room_type_id, 0) + 1
+
+            for r_type_id, req_count in type_requested_counts.items():
+                total_type_rooms = db.query(Room).filter(
+                    Room.room_type_id == r_type_id,
+                    Room.branch_id == branch_id
+                ).count()
+
+                assigned_reg = db.query(BookingRoom).join(Booking).join(Room).filter(
+                    Room.room_type_id == r_type_id,
                     Booking.branch_id == branch_id,
-                    Booking.status.in_(["booked", "checked-in", "checked_in"]),  # Only check for active bookings
+                    func.lower(Booking.status).in_(active_statuses),
                     Booking.check_in < booking.check_out,
                     Booking.check_out > booking.check_in
-                )
-                .first()
-            )
+                ).count()
 
-            if package_conflict or regular_conflict:
-                room = db.query(Room).filter(Room.id == room_id).first()
-                raise HTTPException(status_code=400, detail=f"Room {room.number if room else room_id} is not available for the selected dates.")
+                assigned_pkg = db.query(PackageBookingRoom).join(PackageBooking).join(Room).filter(
+                    Room.room_type_id == r_type_id,
+                    PackageBooking.branch_id == branch_id,
+                    func.lower(PackageBooking.status).in_(active_statuses),
+                    PackageBooking.check_in < booking.check_out,
+                    PackageBooking.check_out > booking.check_in
+                ).count()
+
+                soft_sum = db.query(func.sum(Booking.num_rooms)).filter(
+                    Booking.room_type_id == r_type_id,
+                    Booking.branch_id == branch_id,
+                    func.lower(Booking.status).in_(active_statuses),
+                    Booking.check_in < booking.check_out,
+                    Booking.check_out > booking.check_in,
+                    ~Booking.booking_rooms.any()
+                ).scalar()
+                soft_count = int(soft_sum) if soft_sum else 0
+
+                avail_capacity = total_type_rooms - (assigned_reg + assigned_pkg + soft_count)
+                if req_count > avail_capacity:
+                    rt = db.query(RoomType).filter(RoomType.id == r_type_id).first()
+                    rt_name = rt.name if rt else f"Type {r_type_id}"
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"No rooms available for room type '{rt_name}' for selected dates (Available: {max(0, avail_capacity)}, Requested: {req_count})."
+                    )
 
     # Calculate calculated_total_amount based on package price and duration
     # Note: Package price is typically per night.
