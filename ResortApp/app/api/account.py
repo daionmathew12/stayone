@@ -1120,18 +1120,27 @@ def get_comprehensive_report(
             if transaction_filters:
                 transaction_query = transaction_query.filter(and_(*transaction_filters))
             transactions = transaction_query.order_by(InventoryTransaction.created_at.desc()).limit(limit).all()
-            result["data"]["inventory_transactions"] = [{
-                "id": t.id,
-                "item_id": t.item_id,
-                "item_name": t.item.name if t.item else None,
-                "transaction_type": t.transaction_type,
-                "quantity": float(t.quantity or 0),
-                "unit_price": float(t.unit_price or 0),
-                "total_amount": float(t.total_amount or 0),
-                "reference_number": t.reference_number,
-                "notes": t.notes,
-                "created_at": t.created_at.isoformat() + "Z" if t.created_at else None
-            } for t in transactions]
+            def _calc_tx_amount(t):
+                u_p = float(t.unit_price if t.unit_price is not None else ((t.item.selling_price or t.item.unit_price or 0.0) if t.item else 0.0))
+                if t.total_amount is not None and (t.total_amount > 0 or t.transaction_type == 'transfer'):
+                    return u_p, float(t.total_amount)
+                return u_p, round(abs(float(t.quantity or 0)) * u_p, 2)
+
+            result["data"]["inventory_transactions"] = []
+            for t in transactions:
+                u_p, t_amt = _calc_tx_amount(t)
+                result["data"]["inventory_transactions"].append({
+                    "id": t.id,
+                    "item_id": t.item_id,
+                    "item_name": t.item.name if t.item else None,
+                    "transaction_type": t.transaction_type,
+                    "quantity": float(t.quantity or 0),
+                    "unit_price": u_p,
+                    "total_amount": t_amt,
+                    "reference_number": t.reference_number,
+                    "notes": t.notes,
+                    "created_at": t.created_at.isoformat() + "Z" if t.created_at else None
+                })
         except Exception as e:
             print(f"Error fetching inventory transactions: {str(e)}")
             result["data"]["inventory_transactions"] = []

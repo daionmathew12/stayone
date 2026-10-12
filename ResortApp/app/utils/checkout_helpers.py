@@ -14,45 +14,28 @@ import re
 def calculate_consumable_charge(inv_item, used_qty, limit_from_audit=None):
     """
     Unified logic to calculate charge for a consumable item.
-    - Amenities (water, etc.) get a default limit of 2 if not set.
-    - Respects is_sellable_to_guest flag.
-    - Calculates replacement price (Selling Price or Cost + GST).
+    - Items consumed beyond complimentary limit (or all consumed if limit is 0) are charged.
+    - Calculates price prioritizing selling_price, then unit_price (cost + GST).
     """
-    clean_name = inv_item.name
+    clean_name = inv_item.name or ""
     # Remove quantity suffix if any
     clean_name = re.sub(r'\s*\(\s*[xX]\d+[^)]*\)', '', clean_name).strip()
     
-    limit = limit_from_audit if limit_from_audit is not None else (inv_item.complimentary_limit or 0)
-    is_amenity = any(kw in clean_name.lower() for kw in ["water", "soap", "shampoo", "amenity"])
-    
-    # SQLAlchemy boolean handling: 0 is False, 1 is True, None is treated as False by default in our logic
-    is_sellable = bool(getattr(inv_item, 'is_sellable_to_guest', False))
-    
-    # If the attribute is missing, we might want a different default, but model says default=False
-    # However, for backward compatibility or if not explicitly set, let's check:
-    if getattr(inv_item, 'is_sellable_to_guest', None) is None:
-        # If explicitly NULL, we check if it has a selling price
-        is_sellable = (inv_item.selling_price or 0) > 0
-
-    chargeable_qty = 0
-    if is_amenity:
-        # User Instruction: "there are no free limits... items that are set as complimentary will not be charged"
-        # We rely strictly on the passed 'limit' (which should represent the complimentary allocation)
-        # or the Master Data limit. We do NOT effectively force a minimum of 2.
-        effective_limit = limit
-        chargeable_qty = max(0, used_qty - effective_limit)
-    else:
-        # Non-amenities (Soda, Snacks, etc.)
-        if not is_sellable and limit == 0:
-            # If item is marked as "Not Sellable" and no limit is explicitly set,
-            # it's likely a complimentary item not categorized as a basic amenity
-            chargeable_qty = 0
-        else:
-            chargeable_qty = max(0, used_qty - limit)
+    limit = float(limit_from_audit if limit_from_audit is not None else (inv_item.complimentary_limit or 0.0))
+    used_qty_val = float(used_qty or 0.0)
+    chargeable_qty = max(0.0, used_qty_val - limit)
             
     # Calculate price
     selling_price = float(inv_item.selling_price or 0.0)
-    replacement_price = selling_price if selling_price > 0 else (float(inv_item.unit_price or 0.0) * (1.0 + float(inv_item.gst_rate or 0.0) / 100.0))
+    cost_price = float(inv_item.unit_price or 0.0)
+    gst_rate = float(inv_item.gst_rate or 0.0)
+    
+    if selling_price > 0:
+        replacement_price = selling_price
+    elif cost_price > 0:
+        replacement_price = cost_price * (1.0 + gst_rate / 100.0) if gst_rate > 0 else cost_price
+    else:
+        replacement_price = 0.0
     
     return chargeable_qty * replacement_price, replacement_price, chargeable_qty
 

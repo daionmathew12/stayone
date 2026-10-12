@@ -820,10 +820,15 @@ async def handleCompleteCheckoutRequest(
                 
                 # Log the consumption transaction for visibility in "All Transactions"
                 if used_qty > 0:
+                    inv_item_obj = db.query(InventoryItem).filter(InventoryItem.id == item.item_id).first()
+                    u_price = float((inv_item_obj.selling_price or inv_item_obj.unit_price or 0.0) if inv_item_obj else 0.0)
+                    t_amount = float(used_qty) * u_price
                     db.add(InventoryTransaction(
                         item_id=item.item_id,
                         source_location_id=room_loc_id,
                         quantity=-float(used_qty),
+                        unit_price=u_price,
+                        total_amount=t_amount,
                         transaction_type="Usage",
                         reference_number=f"CHK-{request_id}",
                         notes=f"Consumed in Room {target_room_number} during checkout verification",
@@ -3189,9 +3194,9 @@ def _calculate_bill_for_single_room(db: Session, room_number: str, branch_id: in
         asset_keywords = ["linen", "electronic", "furniture", "asset", "fixed", "appliance", "electrical", "fixture", "towel", "bedsheet"]
         is_asset_category = any(kw in (inv_item.category.name if inv_item.category else "").lower() for kw in asset_keywords)
         
-        # Determine if it's a consumable based on category name
-        consumable_keywords = ["food", "drink", "beverage", "amenity", "toiletries", "mini bar", "consumable", "provision"]
-        is_consumable_category = any(kw in (inv_item.category.name if inv_item.category else "").lower() for kw in consumable_keywords) or is_amenity
+        # Determine if it's a consumable based on category name or item name
+        consumable_keywords = ["food", "drink", "beverage", "amenity", "toiletries", "mini bar", "consumable", "provision", "grocery", "groceries", "geoceries", "snack", "coke", "soda"]
+        is_consumable_category = any(kw in (inv_item.category.name if inv_item.category else "").lower() for kw in consumable_keywords) or is_amenity or any(kw in clean_name.lower() for kw in ["water", "coke", "cola", "chip", "snack", "drink", "beverage", "juice", "soda", "biscuit", "cookie"])
 
         # Determine if THIS specific batch is rentable
         # Logic: Category contains "Rent" OR explicitly marked in audit.
@@ -3310,7 +3315,7 @@ def _calculate_bill_for_single_room(db: Session, room_number: str, branch_id: in
                     if u_charge > 0:
                         charges.inventory_charges = (charges.inventory_charges or 0) + u_charge
             
-            elif is_amenity or (getattr(inv_item, 'is_sellable_to_guest', False) or limit > 0):
+            elif is_consumable_category or is_amenity or (getattr(inv_item, 'is_sellable_to_guest', False) or limit > 0) or (not is_fixed_asset and not is_rentable):
                 # Consumables / Amenities
                 total_consumed = used_qty 
                 usage_charge, replacement_price, chargeable_qty = calculate_consumable_charge(inv_item, total_consumed, limit_from_audit=limit)
@@ -4066,8 +4071,8 @@ def _calculate_bill_for_entire_booking(db: Session, room_number: str, branch_id:
             asset_keywords = ["linen", "electronic", "furniture", "asset", "fixed", "appliance", "electrical", "fixture", "towel", "bedsheet"]
             is_asset_category = any(kw in (inv_item.category.name if inv_item.category else "").lower() for kw in asset_keywords)
             
-            consumable_keywords = ["food", "drink", "beverage", "amenity", "toiletries", "mini bar", "consumable", "provision"]
-            is_consumable_category = any(kw in (inv_item.category.name if inv_item.category else "").lower() for kw in consumable_keywords) or is_amenity
+            consumable_keywords = ["food", "drink", "beverage", "amenity", "toiletries", "mini bar", "consumable", "provision", "grocery", "groceries", "geoceries", "snack", "coke", "soda"]
+            is_consumable_category = any(kw in (inv_item.category.name if inv_item.category else "").lower() for kw in consumable_keywords) or is_amenity or any(kw in clean_name.lower() for kw in ["water", "coke", "cola", "chip", "snack", "drink", "beverage", "juice", "soda", "biscuit", "cookie"])
  
             is_rentable = is_rentable_audit or "rental" in (inv_item.category.name if inv_item.category else "").lower()
             if is_asset_category and not ("rental" in (inv_item.category.name if inv_item.category else "").lower() or is_rentable_audit):
@@ -4123,8 +4128,8 @@ def _calculate_bill_for_entire_booking(db: Session, room_number: str, branch_id:
                     except:
                          usage_charge = payable_qty * rental_unit_price * stay_days
                 
-                # Consumables Fix: If it's an amenity or marked sellable, treat as consumable
-                elif is_amenity or (getattr(inv_item, 'is_sellable_to_guest', False) or limit > 0):
+                # Consumables Fix: If it's a consumable, amenity, or non-fixed item, treat as consumable
+                elif is_consumable_category or is_amenity or (getattr(inv_item, 'is_sellable_to_guest', False) or limit > 0) or (not is_fixed_asset and not is_rentable):
                     # Use central helper for consistent calculation
                     u_charge, rep_price, chargeable_qty = calculate_consumable_charge(inv_item, used_qty, limit_from_audit=limit)
                     usage_charge = u_charge
