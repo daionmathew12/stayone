@@ -2445,46 +2445,78 @@ export default function FoodOrders() {
                       </div>
                       <div className="bg-gray-50 p-4 rounded-xl border border-gray-100">
                         <label className="block text-sm font-bold text-gray-700 mb-2">
-                          Assign to Kitchen * {employees.length > 0 && <span className="text-xs text-gray-400 font-normal">({employees.filter(e => {
-                            const r = (e.role || '').toLowerCase();
-                            const n = (e.name || '').toLowerCase();
-                            return r.includes('kitchen') || r.includes('chef') || r.includes('cook') || r.includes('kitch') || n.includes('chef') || r.includes('f&b');
-                          }).length} found)</span>}
+                          Assign to Kitchen * {employees.length > 0 && (
+                            <span className="text-xs text-gray-400 font-normal">
+                              ({(() => {
+                                const count = employees.filter(e => {
+                                  const r = (e.role || '').toLowerCase();
+                                  const n = (e.name || '').toLowerCase();
+                                  return r.includes('kitchen') || r.includes('kicthen') || r.includes('chef') || r.includes('cook') || r.includes('kitch') || r.includes('f&b') || r.includes('pantry') ||
+                                         n.includes('kitchen') || n.includes('kicthen') || n.includes('chef') || n.includes('cook') || n.includes('kitch');
+                                }).length;
+                                return count > 0 ? `${count} found` : `${employees.length} staff available`;
+                              })()})
+                            </span>
+                          )}
                         </label>
                         <select
                           value={preparedById}
                           onChange={(e) => setPreparedById(e.target.value)}
                           className="w-full border border-gray-300 rounded-lg px-4 py-2.5 focus:ring-2 focus:ring-indigo-500 transition text-black font-medium"
                         >
-                          <option value="">{employees.length === 0 ? "Searching for employees..." : "Choose a chef..."}</option>
-                          {Array.isArray(employees) && [...employees]
-                            .filter(emp => {
-                              if (!emp || !emp.id) return false;
-                              const r = (emp.role || '').toLowerCase();
-                              const n = (emp.name || '').toLowerCase();
-                              return r.includes('kitchen') || r.includes('chef') || r.includes('cook') || r.includes('kitch') || n.includes('chef') || r.includes('f&b');
-                            })
-                            .map((emp) => {
-                              const isOnline = emp.status === 'on_duty' || emp.is_clocked_in;
+                          <option value="">{employees.length === 0 ? "Searching for employees..." : "Choose a chef / kitchen staff..."}</option>
+                          {(() => {
+                            const isKitchen = (e) => {
+                              if (!e || !e.id) return false;
+                              const r = (e.role || '').toLowerCase();
+                              const n = (e.name || '').toLowerCase();
+                              return r.includes('kitchen') || r.includes('kicthen') || r.includes('chef') || r.includes('cook') || r.includes('kitch') || r.includes('f&b') || r.includes('pantry') ||
+                                     n.includes('kitchen') || n.includes('kicthen') || n.includes('chef') || n.includes('cook') || n.includes('kitch');
+                            };
+                            const kitchenStaff = employees.filter(isKitchen);
+                            const otherStaff = employees.filter(e => !isKitchen(e));
+                            
+                            if (kitchenStaff.length > 0) {
                               return (
-                                <option
-                                  key={emp.id}
-                                  value={emp.id}
-                                  style={{ color: isOnline ? "#16a34a" : "inherit", fontWeight: isOnline ? "bold" : "normal" }}
-                                >
-                                  {emp.name || `Chef ${emp.id}`} {isOnline ? " 🟢 (Online)" : `(${emp.status || 'off_duty'})`}
-                                </option>
+                                <>
+                                  <optgroup label="Kitchen Staff &amp; Chefs">
+                                    {kitchenStaff.map(emp => {
+                                      const isOnline = emp.status === 'on_duty' || emp.is_clocked_in;
+                                      return (
+                                        <option key={emp.id} value={emp.id} style={{ color: isOnline ? "#16a34a" : "inherit", fontWeight: isOnline ? "bold" : "normal" }}>
+                                          {emp.name || `Chef ${emp.id}`} ({emp.role || 'Kitchen'}) {isOnline ? " 🟢 (Online)" : `(${emp.status || 'off_duty'})`}
+                                        </option>
+                                      );
+                                    })}
+                                  </optgroup>
+                                  {otherStaff.length > 0 && (
+                                    <optgroup label="Other Staff">
+                                      {otherStaff.map(emp => (
+                                        <option key={emp.id} value={emp.id}>
+                                          {emp.name} ({emp.role || 'Staff'})
+                                        </option>
+                                      ))}
+                                    </optgroup>
+                                  )}
+                                </>
                               );
-                            })}
+                            }
+                            return employees.map(emp => (
+                              <option key={emp.id} value={emp.id}>
+                                {emp.name} ({emp.role || 'Staff'})
+                              </option>
+                            ));
+                          })()}
                         </select>
                       </div>
                       {orderType === "room_service" && (
                         <div className="md:col-span-2 bg-indigo-50/50 p-4 rounded-xl border border-indigo-100">
                           <label className="block text-sm font-bold text-indigo-900 mb-2">
-                            Assign Delivery Person * {employees.length > 0 && <span className="text-xs text-indigo-700 font-normal">({employees.filter(e => {
-                              const r = (e.role || '').toLowerCase();
-                              return r.includes('waiter') || r.includes('house') || r.includes('service') || r.includes('delivery') || r.includes('staff') || r.includes('operational');
-                            }).length} found)</span>}
+                            Assign Delivery Person * {employees.length > 0 && (
+                              <span className="text-xs text-indigo-700 font-normal">
+                                ({employees.length} staff available)
+                              </span>
+                            )}
                           </label>
                           <select
                             value={employeeId}
@@ -2492,24 +2524,48 @@ export default function FoodOrders() {
                             className="w-full border border-indigo-200 rounded-lg px-4 py-2.5 focus:ring-2 focus:ring-indigo-500 transition text-black font-medium bg-white"
                           >
                             <option value="">{employees.length === 0 ? "Searching for employees..." : "Choose a delivery person..."}</option>
-                            {Array.isArray(employees) && [...employees]
-                              .filter(emp => {
-                                if (!emp || !emp.id) return false;
-                                const r = (emp.role || '').toLowerCase();
-                                return r.includes('waiter') || r.includes('house') || r.includes('service') || r.includes('delivery') || r.includes('staff') || r.includes('operational');
-                              })
-                              .map((emp) => {
-                                const isOnline = emp.status === 'on_duty' || emp.is_clocked_in;
+                            {(() => {
+                              const isDelivery = (e) => {
+                                if (!e || !e.id) return false;
+                                const r = (e.role || '').toLowerCase();
+                                const n = (e.name || '').toLowerCase();
+                                return r.includes('waiter') || r.includes('house') || r.includes('service') || r.includes('delivery') || r.includes('staff') || r.includes('operational') || r.includes('room') || r.includes('boy') ||
+                                       n.includes('waiter') || n.includes('delivery') || n.includes('room') || n.includes('boy');
+                              };
+                              const deliveryStaff = employees.filter(isDelivery);
+                              const otherStaff = employees.filter(e => !isDelivery(e));
+
+                              if (deliveryStaff.length > 0) {
                                 return (
-                                  <option
-                                    key={emp.id}
-                                    value={emp.id}
-                                    style={{ color: isOnline ? "#16a34a" : "inherit", fontWeight: isOnline ? "bold" : "normal" }}
-                                  >
-                                    {emp.name || `Employee ${emp.id}`} {isOnline ? " 🟢 (Online)" : `(${emp.status || 'off_duty'})`}
-                                  </option>
+                                  <>
+                                    <optgroup label="Service &amp; Delivery Staff">
+                                      {deliveryStaff.map(emp => {
+                                        const isOnline = emp.status === 'on_duty' || emp.is_clocked_in;
+                                        return (
+                                          <option key={emp.id} value={emp.id} style={{ color: isOnline ? "#16a34a" : "inherit", fontWeight: isOnline ? "bold" : "normal" }}>
+                                            {emp.name} ({emp.role || 'Staff'}) {isOnline ? " 🟢 (Online)" : `(${emp.status || 'off_duty'})`}
+                                          </option>
+                                        );
+                                      })}
+                                    </optgroup>
+                                    {otherStaff.length > 0 && (
+                                      <optgroup label="Other Staff">
+                                        {otherStaff.map(emp => (
+                                          <option key={emp.id} value={emp.id}>
+                                            {emp.name} ({emp.role || 'Staff'})
+                                          </option>
+                                        ))}
+                                      </optgroup>
+                                    )}
+                                  </>
                                 );
-                              })}
+                              }
+                              return employees.map(emp => (
+                                <option key={emp.id} value={emp.id}>
+                                  {emp.name} ({emp.role || 'Staff'})
+                                </option>
+                              ));
+                            })()}
                           </select>
                         </div>
                       )}
@@ -2843,7 +2899,9 @@ export default function FoodOrders() {
                                   if (!emp || !emp.id) return false;
                                   if (emp.id === order.assigned_employee_id) return true;
                                   const r = (emp.role || '').toLowerCase();
-                                  return r.includes('waiter') || r.includes('house') || r.includes('service') || r.includes('delivery') || r.includes('staff') || r.includes('operational');
+                                  const n = (emp.name || '').toLowerCase();
+                                  return r.includes('waiter') || r.includes('house') || r.includes('service') || r.includes('delivery') || r.includes('staff') || r.includes('operational') || r.includes('room') || r.includes('boy') ||
+                                         n.includes('waiter') || n.includes('delivery') || n.includes('room') || n.includes('boy');
                                 })
                                 .map((emp) => (
                                   <option key={emp.id} value={emp.id}>
@@ -2872,7 +2930,8 @@ export default function FoodOrders() {
                                   if (emp.id === order.prepared_by_id) return true;
                                   const r = (emp.role || '').toLowerCase();
                                   const n = (emp.name || '').toLowerCase();
-                                  return r.includes('kitchen') || r.includes('chef') || r.includes('cook') || r.includes('kitch') || n.includes('chef') || r.includes('f&b');
+                                  return r.includes('kitchen') || r.includes('kicthen') || r.includes('chef') || r.includes('cook') || r.includes('kitch') || r.includes('f&b') || r.includes('pantry') ||
+                                         n.includes('kitchen') || n.includes('kicthen') || n.includes('chef') || n.includes('cook') || n.includes('kitch');
                                 })
                                 .map((emp) => (
                                   <option key={emp.id} value={emp.id}>
