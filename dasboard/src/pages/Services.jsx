@@ -1902,8 +1902,21 @@ const Services = () => {
 
     if (['return_location_id', 'laundry_location_id', 'waste_location_id', 'damage_location_id'].includes(field)) {
       newItems[index][field] = value ? parseInt(value) : null;
-    } else if (['is_laundry', 'is_waste', 'request_replacement'].includes(field)) {
+    } else if (['is_laundry', 'is_waste', 'request_replacement', 'is_returned'].includes(field)) {
       newItems[index][field] = value; // Boolean value
+      if (field === 'is_laundry' && value === true) {
+        newItems[index].is_returned = false;
+        newItems[index].return_location_id = null;
+        if (!newItems[index].laundry_location_id) {
+          const laundryLoc = locations.find(l => l.location_type?.includes('LAUNDRY') || l.name?.toLowerCase().includes('laundry'));
+          if (laundryLoc) {
+            newItems[index].laundry_location_id = laundryLoc.id;
+          }
+        }
+      } else if (field === 'is_returned' && value === true) {
+        newItems[index].is_laundry = false;
+        newItems[index].laundry_location_id = null;
+      }
     } else {
       // Numeric fields
       const val = parseFloat(value) || 0;
@@ -1962,7 +1975,7 @@ const Services = () => {
         is_returned: !!item.is_returned,
         is_rentable: !!item.is_rentable,
         is_fixed_asset: !!item.is_fixed_asset,
-        return_location_id: item.return_location_id,
+        return_location_id: item.is_laundry ? (item.laundry_location_id || item.return_location_id) : item.return_location_id,
         is_laundry: !!item.is_laundry,
         laundry_location_id: item.laundry_location_id,
         is_waste: !!item.is_waste,
@@ -1986,7 +1999,7 @@ const Services = () => {
           request_replacement: !!asset.request_replacement,
           is_damaged: !!asset.is_damaged,
           is_returned: !!asset.is_returned,
-          return_location_id: asset.return_location_id
+          return_location_id: asset.is_laundry ? (asset.laundry_location_id || asset.return_location_id) : asset.return_location_id
         }));
 
       await api.post(`/bill/checkout-request/${checkoutRequestId}/check-inventory`, {

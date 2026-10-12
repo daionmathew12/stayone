@@ -838,20 +838,47 @@ async def handleCompleteCheckoutRequest(
                     room_stock_record.quantity = max(0, float(room_stock_record.quantity) - unused_qty)
                     room_stock_record.last_updated = get_ist_now()
                 
-                target_return_loc_id = item.return_location_id
-                if not target_return_loc_id:
-                    # Fallback to Warehouse or first active store
+                dest_loc_id = None
+                if item.is_laundry:
+                    # Priority 1: explicitly selected laundry_location_id or return_location_id
+                    dest_loc_id = getattr(item, 'laundry_location_id', None) or getattr(item, 'return_location_id', None)
+                    if not dest_loc_id:
+                        # Priority 2: find location with type LAUNDRY or name containing laundry in this branch
+                        laundry_loc = db.query(Location).filter(
+                            (Location.location_type == 'LAUNDRY') | (Location.name.ilike('%laundry%')),
+                            Location.is_active == True,
+                            Location.branch_id == effective_branch_id
+                        ).first()
+                        if laundry_loc:
+                            dest_loc_id = laundry_loc.id
+                else:
+                    dest_loc_id = getattr(item, 'return_location_id', None)
+
+                # Fallback if dest_loc_id is still not resolved (Must NEVER be a GUEST_ROOM or the source room itself!)
+                if not dest_loc_id:
                     fallback_loc = db.query(Location).filter(
                         (Location.name.ilike('%warehouse%')) | (Location.location_type == 'WAREHOUSE'),
                         Location.is_active == True,
                         Location.branch_id == effective_branch_id
                     ).first()
                     if not fallback_loc:
-                        fallback_loc = db.query(Location).filter(Location.is_active == True, Location.branch_id == effective_branch_id).first()
-                    
+                        fallback_loc = db.query(Location).filter(
+                            (Location.location_type.in_(['MAIN_INVENTORY', 'CENTRAL_STORE', 'STORE', 'WAREHOUSE'])) | (Location.name.ilike('%main%')),
+                            Location.is_active == True,
+                            Location.branch_id == effective_branch_id
+                        ).first()
+                    if not fallback_loc:
+                        fallback_loc = db.query(Location).filter(
+                            Location.location_type != 'GUEST_ROOM',
+                            Location.id != room_loc_id,
+                            Location.is_active == True,
+                            Location.branch_id == effective_branch_id
+                        ).first()
                     if fallback_loc:
-                        target_return_loc_id = fallback_loc.id
-                
+                        dest_loc_id = fallback_loc.id
+
+                target_return_loc_id = dest_loc_id
+
                 # Handle Laundry flow
                 if item.is_laundry and target_return_loc_id:
                     laundry_entry = LaundryLog(
@@ -896,15 +923,18 @@ async def handleCompleteCheckoutRequest(
                             branch_id=effective_branch_id
                         ))
                     
-                    # ADDED: Transaction for returned items
+                    # Transaction for returned or laundry items
+                    ref_num = f"CHKINV-LND-{checkout_request.id}" if item.is_laundry else f"CHKINV-RET-{checkout_request.id}"
+                    txn_notes = f"Linen sent to laundry - Room {target_room_number}" if item.is_laundry else f"Returned at checkout - Room {target_room_number}"
+
                     return_txn = InventoryTransaction(
                         item_id=item.item_id,
-                        transaction_type="transfer", # Fixed from transfer_in
+                        transaction_type="transfer",
                         quantity=unused_qty,
                         unit_price=inv_item.unit_price or 0.0,
                         total_amount=0.0,
-                        reference_number=f"CHKINV-RET-{checkout_request.id}",
-                        notes=f"Returned at checkout - Room {target_room_number}",
+                        reference_number=ref_num,
+                        notes=txn_notes,
                         created_by=current_user.id,
                         source_location_id=room_loc_id,
                         destination_location_id=target_return_loc_id,
@@ -1156,14 +1186,25 @@ async def handleCompleteCheckoutRequest(
             # Determine Return Location for Asset EARLY to avoid scoping errors
             asset_return_loc_id = asset.return_location_id
             if not asset_return_loc_id and asset.is_returned:
-                # Fallback to Warehouse
+                # Fallback to Warehouse or Central Store (Must NEVER be a GUEST_ROOM or source room!)
                 fallback_loc = db.query(Location).filter(
                     (Location.name.ilike('%warehouse%')) | (Location.location_type == 'WAREHOUSE'),
                     Location.is_active == True,
                     Location.branch_id == effective_branch_id
                 ).first()
                 if not fallback_loc:
-                    fallback_loc = db.query(Location).filter(Location.is_active == True, Location.branch_id == effective_branch_id).first()
+                    fallback_loc = db.query(Location).filter(
+                        (Location.location_type.in_(['MAIN_INVENTORY', 'CENTRAL_STORE', 'STORE', 'WAREHOUSE'])) | (Location.name.ilike('%main%')),
+                        Location.is_active == True,
+                        Location.branch_id == effective_branch_id
+                    ).first()
+                if not fallback_loc:
+                    fallback_loc = db.query(Location).filter(
+                        Location.location_type != 'GUEST_ROOM',
+                        Location.id != room_loc_id,
+                        Location.is_active == True,
+                        Location.branch_id == effective_branch_id
+                    ).first()
                 if fallback_loc:
                     asset_return_loc_id = fallback_loc.id
                     print(f"[CHECKOUT-DEBUG] Asset {asset.item_name} using fallback return location {fallback_loc.name}")
@@ -1200,7 +1241,11 @@ async def handleCompleteCheckoutRequest(
                     is_actually_laundry = True
                 
                 if is_actually_laundry and not asset_laundry_id:
-                     first_laundry = db.query(Location).filter(Location.location_type == 'LAUNDRY', Location.is_active == True).first()
+                     first_laundry = db.query(Location).filter(
+                         (Location.location_type == 'LAUNDRY') | (Location.name.ilike('%laundry%')),
+                         Location.is_active == True,
+                         Location.branch_id == effective_branch_id
+                     ).first()
                      if first_laundry:
                          asset_laundry_id = first_laundry.id
 
