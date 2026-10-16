@@ -410,7 +410,6 @@ def book_package(db: Session, booking: PackageBookingCreate, branch_id: int = No
     # Logic: price * nights * (rooms count if applicable? usually package is per room-night or per person-night?
     # Based on book_package_guest_api logic: package_charges = package_price * stay_nights * len(booking.room_ids)
     
-    from datetime import timezone, datetime, date
     d_check_in = booking.check_in if isinstance(booking.check_in, date) else datetime.strptime(str(booking.check_in), '%Y-%m-%d').date()
     d_check_out = booking.check_out if isinstance(booking.check_out, date) else datetime.strptime(str(booking.check_out), '%Y-%m-%d').date()
     stay_days = (d_check_out - d_check_in).days
@@ -599,7 +598,6 @@ def check_in_package(db: Session, booking_id: int, current_user: User, id_card_i
         # 1.5. PROCESS AMENITY ALLOCATION / SCHEDULED ORDERS (Ported from booking.py)
         if amenityAllocation:
             try:
-                from datetime import timezone, time, timedelta, date
                 alloc_data = json.loads(amenityAllocation)
                 items = alloc_data.get("items", [])
                 

@@ -1489,7 +1489,6 @@ def check_in_booking(
             import json
             from app.models.foodorder import FoodOrder, FoodOrderItem
             from app.models.food_item import FoodItem
-            from datetime import timezone, datetime, timedelta, date, time
             
             alloc_data = json.loads(amenityAllocation)
             items = alloc_data.get("items", [])
@@ -1720,7 +1719,6 @@ def check_in_booking(
                             qty_per_stay = float(item.get("complimentaryPerStay", 0))
                             
                             # Stay duration
-                            from datetime import timezone, date
                             check_in_dt = booking.check_in if isinstance(booking.check_in, date) else datetime.strptime(str(booking.check_in), '%Y-%m-%d').date()
                             check_out_dt = booking.check_out if isinstance(booking.check_out, date) else datetime.strptime(str(booking.check_out), '%Y-%m-%d').date()
                             nights = max(1, (check_out_dt - check_in_dt).days)
