@@ -4,7 +4,7 @@ from typing import List, Optional, Union
 import uuid
 import os
 import shutil
-from datetime import timezone, datetime
+from datetime import timezone, datetime, date, time, timedelta
 
 from app.models.Package import Package, PackageImage, PackageBooking, PackageBookingRoom
 from app.models.room import Room
@@ -713,7 +713,6 @@ def check_in_package(db: Session, booking_id: int, current_user: User, id_card_i
         # 1.6. AUTO-SCHEDULE PACKAGE MEALS if not in allocation
         if booking.package and booking.package.food_included and not amenityAllocation:
             try:
-                from datetime import timezone, time, timedelta, date
                 meals = [m.strip() for m in booking.package.food_included.split(",") if m.strip()]
                 # Load food timing JSON
                 timings = {}
@@ -819,7 +818,6 @@ def check_in_package(db: Session, booking_id: int, current_user: User, id_card_i
                         qty_per_night = float(item.get("complimentaryPerNight", 0))
                         qty_per_stay = float(item.get("complimentaryPerStay", 0))
                         
-                        from datetime import timezone, date
                         check_in_dt = booking.check_in if isinstance(booking.check_in, date) else datetime.strptime(str(booking.check_in), '%Y-%m-%d').date()
                         check_out_dt = booking.check_out if isinstance(booking.check_out, date) else datetime.strptime(str(booking.check_out), '%Y-%m-%d').date()
                         nights = max(1, (check_out_dt - check_in_dt).days)
