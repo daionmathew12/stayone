@@ -7,7 +7,8 @@ from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import or_, and_, func
 from typing import List, Union, Optional
 from app.models.user import User
-from app.models.room import Room
+from app.models.room import Room, RoomType
+from app.models.booking import Booking, BookingRoom
 from app.models.Package import Package, PackageBooking, PackageBookingRoom
 from app.utils.auth import get_db, get_current_user
 from app.utils.branch_scope import get_branch_id
@@ -799,7 +800,6 @@ def extend_package_booking_checkout(booking_id: Union[str, int], new_checkout: s
     Accepts both display ID (PK-000001) and numeric ID.
     """
     from datetime import datetime
-    from sqlalchemy import and_, or_
     
     # Parse display ID (PK-000001) or accept numeric ID
     numeric_id, booking_type = parse_display_id(str(booking_id))
@@ -815,9 +815,10 @@ def extend_package_booking_checkout(booking_id: Union[str, int], new_checkout: s
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD format")
     
-    # Fetch the package booking with its rooms
+    # Fetch the package booking with its rooms and package
     booking = db.query(PackageBooking).options(
-        joinedload(PackageBooking.rooms).joinedload(PackageBookingRoom.room)
+        joinedload(PackageBooking.rooms).joinedload(PackageBookingRoom.room),
+        joinedload(PackageBooking.package)
     ).filter(PackageBooking.id == booking_id).first()
     
     if not booking:
@@ -916,43 +917,151 @@ def extend_package_booking_checkout(booking_id: Union[str, int], new_checkout: s
             detail=f"New checkout date ({new_checkout_date}) must be after current checkout date ({booking.check_out})"
         )
     
-    # Check for conflicts with other bookings on the same rooms
-    room_ids = [br.room_id for br in booking.rooms if br.room_id]
+    # Active booking statuses to check for overlaps
+    active_statuses = ["booked", "checked-in", "checked_in", "confirmed", "occupied"]
     
-    if room_ids:
-        # Check for conflicts with regular bookings
-        from app.models.booking import Booking, BookingRoom
-        conflicting_bookings = db.query(Booking).join(BookingRoom).filter(
-            BookingRoom.room_id.in_(room_ids),
-            Booking.status.in_(['booked', 'checked-in', 'checked_in']),
-            and_(
+    branch_id = booking.branch_id
+    if branch_id is None:
+        if booking.package and booking.package.branch_id:
+            branch_id = booking.package.branch_id
+        elif booking.rooms:
+            first_r = db.query(Room).filter(Room.id == booking.rooms[0].room_id).first()
+            if first_r:
+                branch_id = first_r.branch_id
+
+    is_whole_property = booking.package and booking.package.booking_type == "whole_property"
+
+    if is_whole_property:
+        # Whole Property Package: The ENTIRE property must be 100% available during the extended period.
+        # Check 1: ANY active regular booking in the branch overlapping the extended period
+        reg_conflict = db.query(Booking).filter(
+            Booking.branch_id == branch_id,
+            func.lower(Booking.status).in_(active_statuses),
+            Booking.check_in < new_checkout_date,
+            Booking.check_out > booking.check_out
+        ).first()
+        if reg_conflict:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Cannot extend checkout date. The property has an existing booking ({reg_conflict.display_id or reg_conflict.id}) during the extended period."
+            )
+
+        # Check 2: ANY other active package booking in the branch overlapping the extended period
+        pkg_conflict = db.query(PackageBooking).filter(
+            PackageBooking.id != booking_id,
+            PackageBooking.branch_id == branch_id,
+            func.lower(PackageBooking.status).in_(active_statuses),
+            PackageBooking.check_in < new_checkout_date,
+            PackageBooking.check_out > booking.check_out
+        ).first()
+        if pkg_conflict:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Cannot extend checkout date. The property has an existing package booking ({pkg_conflict.display_id or pkg_conflict.id}) during the extended period."
+            )
+
+    else:
+        # Non-whole-property package:
+        # Check if an active whole-property package already occupies the property during the extended period
+        whole_prop_conflict = (
+            db.query(PackageBooking)
+            .join(Package)
+            .filter(
+                PackageBooking.id != booking_id,
+                PackageBooking.branch_id == branch_id,
+                func.lower(PackageBooking.status).in_(active_statuses),
+                PackageBooking.check_in < new_checkout_date,
+                PackageBooking.check_out > booking.check_out,
+                Package.booking_type == "whole_property"
+            )
+            .first()
+        )
+        if whole_prop_conflict:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Cannot extend checkout date. The property is booked under a Whole Property package ({whole_prop_conflict.display_id or whole_prop_conflict.id}) during the extended period."
+            )
+
+        room_ids = [br.room_id for br in booking.rooms if br.room_id]
+        if room_ids:
+            # Check for physical room conflicts with regular bookings
+            conflicting_bookings = db.query(Booking).join(BookingRoom).filter(
+                BookingRoom.room_id.in_(room_ids),
+                Booking.branch_id == branch_id,
+                func.lower(Booking.status).in_(active_statuses),
                 Booking.check_in < new_checkout_date,
                 Booking.check_out > booking.check_out
-            )
-        ).first()
-        
-        if conflicting_bookings:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Cannot extend checkout date. Room(s) are already booked by another booking (ID: {conflicting_bookings.id}) during the extended period."
-            )
-        
-        # Check for conflicts with other package bookings
-        conflicting_package_bookings = db.query(PackageBooking).join(PackageBookingRoom).filter(
-            PackageBooking.id != booking_id,
-            PackageBookingRoom.room_id.in_(room_ids),
-            PackageBooking.status.in_(['booked', 'checked-in', 'checked_in']),
-            and_(
+            ).first()
+            if conflicting_bookings:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Cannot extend checkout date. Room(s) are already booked by another booking ({conflicting_bookings.display_id or conflicting_bookings.id}) during the extended period."
+                )
+
+            # Check for physical room conflicts with other package bookings
+            conflicting_package_bookings = db.query(PackageBooking).join(PackageBookingRoom).filter(
+                PackageBooking.id != booking_id,
+                PackageBookingRoom.room_id.in_(room_ids),
+                PackageBooking.branch_id == branch_id,
+                func.lower(PackageBooking.status).in_(active_statuses),
                 PackageBooking.check_in < new_checkout_date,
                 PackageBooking.check_out > booking.check_out
-            )
-        ).first()
-        
-        if conflicting_package_bookings:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Cannot extend checkout date. Room(s) are already booked by another package booking (ID: {conflicting_package_bookings.id}) during the extended period."
-            )
+            ).first()
+            if conflicting_package_bookings:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Cannot extend checkout date. Room(s) are already booked by another package booking ({conflicting_package_bookings.display_id or conflicting_package_bookings.id}) during the extended period."
+                )
+
+            # Check for capacity exhaustion due to soft allocations of these room types
+            requested_rooms = db.query(Room).filter(Room.id.in_(room_ids), Room.branch_id == branch_id).all()
+            type_requested_counts = {}
+            for r in requested_rooms:
+                if r.room_type_id:
+                    type_requested_counts[r.room_type_id] = type_requested_counts.get(r.room_type_id, 0) + 1
+
+            for r_type_id, req_count in type_requested_counts.items():
+                total_type_rooms = db.query(Room).filter(
+                    Room.room_type_id == r_type_id,
+                    Room.branch_id == branch_id,
+                    Room.status.notin_(["Deleted", "Maintenance", "Out of Order"])
+                ).count()
+
+                assigned_reg = db.query(BookingRoom).join(Booking).join(Room).filter(
+                    Room.room_type_id == r_type_id,
+                    Booking.branch_id == branch_id,
+                    func.lower(Booking.status).in_(active_statuses),
+                    Booking.check_in < new_checkout_date,
+                    Booking.check_out > booking.check_out
+                ).count()
+
+                assigned_pkg = db.query(PackageBookingRoom).join(PackageBooking).join(Room).filter(
+                    Room.room_type_id == r_type_id,
+                    PackageBooking.id != booking_id,
+                    PackageBooking.branch_id == branch_id,
+                    func.lower(PackageBooking.status).in_(active_statuses),
+                    PackageBooking.check_in < new_checkout_date,
+                    PackageBooking.check_out > booking.check_out
+                ).count()
+
+                soft_sum = db.query(func.sum(Booking.num_rooms)).filter(
+                    Booking.room_type_id == r_type_id,
+                    Booking.branch_id == branch_id,
+                    func.lower(Booking.status).in_(active_statuses),
+                    Booking.check_in < new_checkout_date,
+                    Booking.check_out > booking.check_out,
+                    ~Booking.booking_rooms.any()
+                ).scalar()
+                soft_count = int(soft_sum) if soft_sum else 0
+
+                avail_capacity = total_type_rooms - (assigned_reg + assigned_pkg + soft_count)
+                if req_count > avail_capacity:
+                    rt = db.query(RoomType).filter(RoomType.id == r_type_id).first()
+                    rt_name = rt.name if rt else f"Type {r_type_id}"
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Cannot extend checkout date. Room type '{rt_name}' does not have enough available rooms for the extended dates (Available: {max(0, avail_capacity)}, Requested: {req_count})."
+                    )
     
     # Update the checkout date
     booking.check_out = new_checkout_date
