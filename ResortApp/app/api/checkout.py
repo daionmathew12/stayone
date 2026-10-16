@@ -3226,27 +3226,41 @@ def _calculate_bill_for_single_room(db: Session, room_number: str, branch_id: in
         # Enter the usage block if there are any quantities OR a pre-calculated charge
         provided_usage_for_gate = float(item_data.get('provided_usage_charge') or 0)
         if used_qty > 0 or allocated_stock > 0 or missing_qty > 0 or provided_usage_for_gate > 0:
-            limit = float(item_data.get('complimentary_qty', 0))
+            limit = float(item_data.get('complimentary_limit') or item_data.get('complimentary_qty') or 0)
             
             # RE-CALCULATION FOR EXISTING BAD DATA
-            if limit == 0 and checkout_request.booking_id:
+            b_id = checkout_request.booking_id if checkout_request else None
+            pkg_id = checkout_request.package_booking_id if checkout_request else None
+            if limit == 0 and (b_id or pkg_id):
                 try:
                     # Infer room location id from room number if strictly needed or rely on 0
                     current_room_obj = db.query(Room).filter(Room.number == room_number).first()
-                    current_booking_obj = db.query(Booking).filter(Booking.id == checkout_request.booking_id).first()
-                    if current_room_obj and current_booking_obj and current_room_obj.inventory_location_id:
-                         cutoff_date = current_booking_obj.check_in - timedelta(days=1)
+                    check_in_raw = None
+                    if b_id:
+                        cb = db.query(Booking).filter(Booking.id == b_id).first()
+                        if cb: check_in_raw = getattr(cb, 'checked_in_at', None) or cb.check_in
+                    elif pkg_id:
+                        pb = db.query(PackageBooking).filter(PackageBooking.id == pkg_id).first()
+                        if pb: check_in_raw = getattr(pb, 'checked_in_at', None) or pb.check_in
+                        
+                    if current_room_obj and check_in_raw and current_room_obj.inventory_location_id:
+                        if isinstance(check_in_raw, datetime):
+                            cutoff_dt = check_in_raw - timedelta(days=1)
+                        elif isinstance(check_in_raw, date):
+                            cutoff_dt = datetime.combine(check_in_raw - timedelta(days=1), datetime.min.time())
+                        else:
+                            cutoff_dt = datetime.min
                          
-                         comp_issued_qty = (db.query(func.sum(StockIssueDetail.issued_quantity))
+                        comp_issued_qty = (db.query(func.sum(StockIssueDetail.issued_quantity))
                             .join(StockIssue)
                             .filter(
                                 StockIssue.destination_location_id == current_room_obj.inventory_location_id,
                                 StockIssueDetail.item_id == item_id,
-                                StockIssue.issue_date >= cutoff_date,
-                                or_(StockIssueDetail.is_payable == False, StockIssueDetail.is_payable == None)
+                                StockIssue.issue_date >= cutoff_dt,
+                                or_(StockIssueDetail.is_payable == False, StockIssueDetail.is_payable.is_(None))
                             )
                             .scalar()) or 0.0
-                         if comp_issued_qty > 0:
+                        if comp_issued_qty > 0:
                             limit = float(comp_issued_qty)
                             # print(f"DEBUG RE-CALC LIMIT: Item {inv_item.name} Limit increased to {limit} from StockHistory")
                 except: pass
@@ -4012,7 +4026,9 @@ def _calculate_bill_for_entire_booking(db: Session, room_number: str, branch_id:
                     "damage_qty": 0.0,
                     "missing_qty": 0.0,
                     "allocated_stock": 0.0,
-                    "provided_bad_charge": 0.0
+                    "provided_bad_charge": 0.0,
+                    "provided_usage_charge": 0.0,
+                    "complimentary_limit": 0.0
                 }
             
             # OR logic for fixed flag within the (iid, is_rent) group
@@ -4022,7 +4038,14 @@ def _calculate_bill_for_entire_booking(db: Session, room_number: str, branch_id:
             aggregated_room_audit[audit_key]["damage_qty"] += float(item_data.get('damage_qty') or 0)
             aggregated_room_audit[audit_key]["missing_qty"] += float(item_data.get('missing_qty') or 0)
             aggregated_room_audit[audit_key]["provided_bad_charge"] += float(item_data.get('damage_charge') or item_data.get('missing_item_charge') or 0)
+            aggregated_room_audit[audit_key]["provided_usage_charge"] += float(item_data.get('total_charge') or 0)
             aggregated_room_audit[audit_key]["allocated_stock"] += float(item_data.get('allocated_stock') or 0)
+            
+            comp_lim = float(item_data.get('complimentary_limit') or item_data.get('complimentary_qty') or 0.0)
+            aggregated_room_audit[audit_key]["complimentary_limit"] = max(
+                aggregated_room_audit[audit_key]["complimentary_limit"],
+                comp_lim
+            )
 
         # Process Aggregated Room Audit
         for (item_id, is_rent), item_data in aggregated_room_audit.items():
@@ -4098,13 +4121,38 @@ def _calculate_bill_for_entire_booking(db: Session, room_number: str, branch_id:
             rental_unit_price = rm.get("rental_price", 0) or ((inv_item.selling_price or inv_item.unit_price or 0.0) if is_rentable else 0)
             
             if used_qty > 0 or allocated_stock > 0:
-                limit = inv_item.complimentary_limit or 0
+                audit_limit = float(item_data.get('complimentary_limit') or item_data.get('complimentary_qty') or 0.0)
+                if audit_limit == 0:
+                    try:
+                        current_room_obj = db.query(Room).filter(Room.number == r_num).first()
+                        check_in_raw = getattr(booking, 'checked_in_at', None) or getattr(booking, 'check_in', None)
+                        if current_room_obj and current_room_obj.inventory_location_id and check_in_raw:
+                            if isinstance(check_in_raw, datetime):
+                                cutoff_dt = check_in_raw - timedelta(days=1)
+                            elif isinstance(check_in_raw, date):
+                                cutoff_dt = datetime.combine(check_in_raw - timedelta(days=1), datetime.min.time())
+                            else:
+                                cutoff_dt = datetime.min
+                                
+                            comp_issued_qty = (db.query(func.sum(StockIssueDetail.issued_quantity))
+                                .join(StockIssue)
+                                .filter(
+                                    StockIssue.destination_location_id == current_room_obj.inventory_location_id,
+                                    StockIssueDetail.item_id == item_id,
+                                    StockIssue.issue_date >= cutoff_dt,
+                                    or_(StockIssueDetail.is_payable == False, StockIssueDetail.is_payable.is_(None))
+                                )
+                                .scalar()) or 0.0
+                            if comp_issued_qty > 0:
+                                audit_limit = float(comp_issued_qty)
+                    except Exception:
+                        pass
+                
+                limit = audit_limit if audit_limit > 0 else float(inv_item.complimentary_limit or 0.0)
+
                 if is_rentable:
                     # Apply rent to all audited units, even if damaged or lost.
                     total_audited_qty = max(used_qty, allocated_stock)
-                    
-                    # Bypass master-data limit for explicit rentals from audit
-                    audit_limit = float(item_data.get('complimentary_qty') or item_data.get('complimentary_limit') or 0.0)
                     actual_limit = audit_limit if audit_limit > 0 else 0.0
                     
                     payable_qty = max(0, total_audited_qty - actual_limit)
@@ -4203,7 +4251,7 @@ def _calculate_bill_for_entire_booking(db: Session, room_number: str, branch_id:
                         "item_id": item_id,
                         "item_name": label,
                         "actual_consumed": total_qty,
-                        "complimentary_limit": inv_item.complimentary_limit or 0,
+                        "complimentary_limit": limit,
                         "charge_per_unit": total_item_charge / total_qty if total_qty > 0 else replacement_price,
                         "total_charge": total_item_charge
                     })

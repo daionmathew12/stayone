@@ -869,7 +869,8 @@ const AddExtraAllocationModal = ({
         console.log(
           `Fetching items for location ${destinationLocation.id} (${destinationLocation.name || destinationLocation.room_area})`,
         );
-        const bookingParam = booking.id ? `&booking_id=${booking.id}` : "";
+        const bookingIdParam = generateBookingId(booking) || booking.id;
+        const bookingParam = bookingIdParam ? `&booking_id=${bookingIdParam}` : "";
         const res = await API.get(
           `/inventory/locations/${destinationLocation.id}/items?limit=1000${bookingParam}`,
           authHeader(),
@@ -1080,7 +1081,8 @@ const AddExtraAllocationModal = ({
       // Reuse existing destinationLocation from above
       if (destinationLocation) {
         try {
-          const bookingParamForRefresh = booking.id ? `?booking_id=${booking.id}` : "";
+          const bookingIdParam = generateBookingId(booking) || booking.id;
+          const bookingParamForRefresh = bookingIdParam ? `?booking_id=${bookingIdParam}` : "";
           const res = await API.get(
             `/inventory/locations/${destinationLocation.id}/items${bookingParamForRefresh}`,
             authHeader(),
@@ -1149,7 +1151,8 @@ const AddExtraAllocationModal = ({
           return patterns.some(p => area === p || name === p);
         });
         if (destLocForRefreshPayable) {
-          const bookingParamForPayable = booking.id ? `?booking_id=${booking.id}` : "";
+          const bookingIdParam = generateBookingId(booking) || booking.id;
+          const bookingParamForPayable = bookingIdParam ? `?booking_id=${bookingIdParam}` : "";
           const res = await API.get(
             `/inventory/locations/${destLocForRefreshPayable.id}/items${bookingParamForPayable}`,
             authHeader(),
@@ -1206,7 +1209,8 @@ const AddExtraAllocationModal = ({
           return patterns.some(p => area === p || name === p);
         });
         if (destLocForRefreshPaid) {
-          const bookingParamForPaid = booking.id ? `?booking_id=${booking.id}` : "";
+          const bookingIdParam = generateBookingId(booking) || booking.id;
+          const bookingParamForPaid = bookingIdParam ? `?booking_id=${bookingIdParam}` : "";
           const res = await API.get(
             `/inventory/locations/${destLocForRefreshPaid.id}/items${bookingParamForPaid}`,
             authHeader(),
@@ -1347,7 +1351,8 @@ const AddExtraAllocationModal = ({
                     if (!destinationLocation) { showBannerMessage("error", `Sector ${roomNumber} not found in logic core`); return; }
                     setLoadingCurrentItems(true);
                     try {
-                      const bookingParamForSync = booking.id ? `&booking_id=${booking.id}` : "";
+                      const bookingIdParam = generateBookingId(booking) || booking.id;
+                      const bookingParamForSync = bookingIdParam ? `&booking_id=${bookingIdParam}` : "";
                       const res = await API.get(`/inventory/locations/${destinationLocation.id}/items?limit=1000${bookingParamForSync}`, authHeader());
                       setCurrentRoomItems(res.data?.items || []);
                     } catch (error) {
@@ -1444,9 +1449,25 @@ const AddExtraAllocationModal = ({
                                     <td className="px-8 py-6">
                                       <div className="flex items-center gap-3">
                                         <span className="font-bold text-slate-600 text-sm tabular-nums">{item.location_stock} <span className="text-[10px] text-slate-400 uppercase">{item.unit}</span></span>
-                                        <div className="flex items-center gap-1.5 grayscale group-hover:grayscale-0 transition-all opacity-60 group-hover:opacity-100">
-                                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
-                                          <span className="text-[9px] font-bold text-emerald-600 uppercase">{item.complimentary_qty} Comp</span>
+                                        <div className="flex items-center gap-2 flex-wrap">
+                                          {item.complimentary_qty > 0 && (
+                                            <div className="flex items-center gap-1.5 bg-emerald-50 text-emerald-600 px-2.5 py-1 rounded-xl border border-emerald-100 shadow-sm">
+                                              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
+                                              <span className="text-[9px] font-bold uppercase">{item.complimentary_qty} Comp</span>
+                                            </div>
+                                          )}
+                                          {payableQty > 0 && (
+                                            <div className="flex items-center gap-1.5 bg-amber-50 text-amber-700 px-2.5 py-1 rounded-xl border border-amber-200 shadow-sm">
+                                              <span className="w-1.5 h-1.5 rounded-full bg-amber-500"></span>
+                                              <span className="text-[9px] font-bold uppercase">{payableQty} Payable</span>
+                                            </div>
+                                          )}
+                                          {(!item.complimentary_qty || item.complimentary_qty <= 0) && payableQty <= 0 && (
+                                            <div className="flex items-center gap-1.5 opacity-60">
+                                              <span className="w-1.5 h-1.5 rounded-full bg-slate-400"></span>
+                                              <span className="text-[9px] font-bold text-slate-500 uppercase">{item.location_stock} Standard</span>
+                                            </div>
+                                          )}
                                         </div>
                                       </div>
                                     </td>
@@ -1459,8 +1480,11 @@ const AddExtraAllocationModal = ({
                                         <div className="flex justify-center">
                                           <button
                                             onClick={() => {
-                                              setPaidStatusMap({ ...paidStatusMap, [item.item_id]: !paidStatus });
-                                              // updateItemPaidStatus(item, !paidStatus); // This function might need to be defined or imported if used
+                                              if (item.issue_detail_id && item.issue_id) {
+                                                updateItemPaidStatus(item, !paidStatus);
+                                              } else {
+                                                setPaidStatusMap({ ...paidStatusMap, [item.item_id]: !paidStatus });
+                                              }
                                             }}
                                             className={`px-5 py-2.5 rounded-2xl text-[9px] font-bold uppercase tracking-wider transition-all border shadow-sm ${paidStatus ? "bg-emerald-50 text-emerald-600 border-emerald-100" : "bg-rose-50 text-rose-600 border-rose-100 shadow-rose-50"
                                               }`}
@@ -1695,12 +1719,15 @@ const AddExtraAllocationModal = ({
                                   source_location_id: asset.source_location_id,
                                   destination_location_id: dest.id,
                                   issue_date: new Date().toISOString(),
-                                  notes: `Inventory Management Deployment: ${asset.item_name}`,
+                                  notes: `Inventory Management Deployment: ${asset.item_name} for booking ${generateBookingId(booking)}`,
+                                  booking_id: booking.id,
+                                  guest_id: booking.user_id,
                                   details: [{ item_id: asset.item_id, issued_quantity: 1, unit: "pcs", rental_price: asset.rental_price, is_payable: true }]
                                 }, authHeader());
                               }
                               showBannerMessage("success", "Protocol Commit Successful");
-                              const res = await API.get(`/inventory/locations/${dest.id}/items`, authHeader());
+                              const bookingIdParam = generateBookingId(booking) || booking.id;
+                              const res = await API.get(`/inventory/locations/${dest.id}/items?booking_id=${bookingIdParam}`, authHeader());
                               setCurrentRoomItems(res.data?.items || []);
                             } catch (error) { showBannerMessage("error", "Commit Failed: " + (error.response?.data?.detail || error.message)); }
                           }}

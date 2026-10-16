@@ -2079,16 +2079,19 @@ def update_issue_detail(
     is_paid: Optional[bool] = None,
     notes: Optional[str] = None,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user),
+    branch_id: Optional[int] = Depends(get_branch_id)
 ):
     """Update issue detail payable/paid status"""
     from app.models.inventory import StockIssueDetail
     
-    detail = db.query(StockIssueDetail).join(StockIssue).filter(
+    query = db.query(StockIssueDetail).join(StockIssue).filter(
         StockIssueDetail.id == detail_id,
-        StockIssueDetail.issue_id == issue_id,
-        StockIssue.branch_id == branch_id
-    ).first()
+        StockIssueDetail.issue_id == issue_id
+    )
+    if branch_id is not None:
+        query = query.filter(StockIssue.branch_id == branch_id)
+    detail = query.first()
     
     if not detail:
         raise HTTPException(status_code=404, detail="Issue detail not found")
@@ -2105,6 +2108,7 @@ def update_issue_detail(
     
     # Update payable status
     if is_payable is not None:
+        detail.is_payable = is_payable
         if is_payable:
             if "Payable item" not in current_notes:
                 note_parts.append("Payable item")
@@ -2118,6 +2122,7 @@ def update_issue_detail(
     
     # Update paid status
     if is_paid is not None:
+        detail.is_paid = is_paid
         # Remove existing PAID/UNPAID markers
         current_notes = current_notes.replace(" - PAID", "").replace(" - UNPAID", "").replace("PAID", "").replace("UNPAID", "").strip()
         if is_paid:
@@ -2135,8 +2140,8 @@ def update_issue_detail(
         "id": detail.id,
         "item_id": detail.item_id,
         "notes": detail.notes,
-        "is_payable": "Payable item" in detail.notes if detail.notes else False,
-        "is_paid": "PAID" in detail.notes.upper() if detail.notes else False
+        "is_payable": detail.is_payable,
+        "is_paid": detail.is_paid
     }
 
 
@@ -2462,6 +2467,8 @@ def update_location(
 def get_location_items(
     location_id: int,
     booking_id: Optional[str] = Query(None),
+    package_booking_id: Optional[str] = Query(None),
+    is_package: Optional[bool] = Query(None),
     start_date: Optional[str] = Query(None),
     end_date: Optional[str] = Query(None),
     db: Session = Depends(get_db),
@@ -2475,37 +2482,122 @@ def get_location_items(
     from app.models.Package import PackageBooking
     from sqlalchemy import func
     from sqlalchemy.orm import joinedload
-    from datetime import timezone, datetime, timedelta
+    from datetime import timezone, datetime, timedelta, date
+
+    location = db.query(Location).filter(Location.id == location_id, (Location.branch_id == branch_id if branch_id is not None else True)).first()
+    if not location:
+        raise HTTPException(status_code=404, detail="Location not found in this branch")
     
     # --- Date Filtering Logic ---
     filter_start = None
     filter_end = None
-    
-    # 1. Try to get dates from booking_id
-    if booking_id:
-        try:
-            # Handle display ID BK-000001 or PK-000001
-            numeric_id, booking_type = parse_display_id(str(booking_id))
-            if numeric_id:
-                working_id = numeric_id
-                is_package = (booking_type == 'package')
-            else:
-                working_id = int(booking_id)
-                is_package = False
-            
-            if is_package:
-                b = db.query(PackageBooking).filter(PackageBooking.id == working_id, PackageBooking.branch_id == branch_id).first()
-            else:
-                b = db.query(Booking).filter(Booking.id == working_id, Booking.branch_id == branch_id).first()
+    working_id = None
+    is_package_booking = False
 
-            
+    target_booking_id = package_booking_id or booking_id
+    if target_booking_id:
+        try:
+            numeric_id, booking_type = parse_display_id(str(target_booking_id))
+            working_id = numeric_id or int(target_booking_id)
+
+            if package_booking_id or booking_type == 'package':
+                is_package_booking = True
+            elif booking_type == 'booking':
+                is_package_booking = False
+            elif is_package is not None:
+                is_package_booking = is_package
+            else:
+                # Disambiguate between PackageBooking and regular Booking for working_id
+                pkg_b = db.query(PackageBooking).filter(
+                    PackageBooking.id == working_id,
+                    (PackageBooking.branch_id == branch_id if branch_id is not None else True)
+                ).first()
+                reg_b = db.query(Booking).filter(
+                    Booking.id == working_id,
+                    (Booking.branch_id == branch_id if branch_id is not None else True)
+                ).first()
+
+                if pkg_b and not reg_b:
+                    is_package_booking = True
+                elif reg_b and not pkg_b:
+                    is_package_booking = False
+                elif pkg_b and reg_b:
+                    # Both exist with this ID! Disambiguate by location and StockIssue
+                    loc_text = "".join(filter(str.isalnum, (location.name or location.room_area or "").lower())) if location else ""
+
+                    pkg_room_numbers = []
+                    if hasattr(pkg_b, 'rooms') and pkg_b.rooms:
+                        pkg_room_numbers = ["".join(filter(str.isalnum, str(r.room.number).lower())) for r in pkg_b.rooms if r.room and r.room.number]
+
+                    reg_room_numbers = []
+                    if hasattr(reg_b, 'rooms') and reg_b.rooms:
+                        reg_room_numbers = ["".join(filter(str.isalnum, str(r.room.number).lower())) for r in reg_b.rooms if r.room and r.room.number]
+
+                    pkg_matches_loc = any(rn and rn in loc_text for rn in pkg_room_numbers)
+                    reg_matches_loc = any(rn and rn in loc_text for rn in reg_room_numbers)
+
+                    if pkg_matches_loc and not reg_matches_loc:
+                        is_package_booking = True
+                    elif reg_matches_loc and not pkg_matches_loc:
+                        is_package_booking = False
+                    else:
+                        # Check notes in StockIssue for PK- or BK-
+                        si = db.query(StockIssue).filter(
+                            StockIssue.destination_location_id == location_id,
+                            StockIssue.booking_id == working_id
+                        ).order_by(StockIssue.id.desc()).first()
+                        if si and si.notes and "PK-" in si.notes.upper():
+                            is_package_booking = True
+                        elif si and si.notes and "BK-" in si.notes.upper():
+                            is_package_booking = False
+                        else:
+                            # Check active vs completed status
+                            pkg_active = pkg_b.status not in ['checked_out', 'cancelled']
+                            reg_active = reg_b.status not in ['checked_out', 'cancelled']
+                            if pkg_active and not reg_active:
+                                is_package_booking = True
+                            elif reg_active and not pkg_active:
+                                is_package_booking = False
+                            else:
+                                is_package_booking = False
+
+            if is_package_booking:
+                b = db.query(PackageBooking).filter(
+                    PackageBooking.id == working_id,
+                    (PackageBooking.branch_id == branch_id if branch_id is not None else True)
+                ).first()
+            else:
+                b = db.query(Booking).filter(
+                    Booking.id == working_id,
+                    (Booking.branch_id == branch_id if branch_id is not None else True)
+                ).first()
+
             if b:
-                filter_start = b.checked_in_at or b.check_in
-                filter_end = b.check_out
-                if isinstance(filter_start, str):
-                    filter_start = datetime.strptime(filter_start, '%Y-%m-%d')
-                if isinstance(filter_end, str):
-                    filter_end = datetime.strptime(filter_end, '%Y-%m-%d')
+                b_in = b.check_in
+                if hasattr(b, 'checked_in_at') and b.checked_in_at:
+                    c_in_d = b.checked_in_at.date() if isinstance(b.checked_in_at, datetime) else b.checked_in_at
+                    if c_in_d and hasattr(b_in, '__lt__') and c_in_d < b_in:
+                        b_in = c_in_d
+                
+                b_out = b.check_out
+                if hasattr(b, 'checked_out_at') and b.checked_out_at:
+                    c_out_d = b.checked_out_at.date() if isinstance(b.checked_out_at, datetime) else b.checked_out_at
+                    if c_out_d and hasattr(b_out, '__gt__') and c_out_d > b_out:
+                        b_out = c_out_d
+
+                if isinstance(b_in, str):
+                    filter_start = datetime.strptime(b_in, '%Y-%m-%d')
+                elif isinstance(b_in, datetime):
+                    filter_start = b_in.replace(hour=0, minute=0, second=0)
+                elif isinstance(b_in, date):
+                    filter_start = datetime.combine(b_in, datetime.min.time())
+
+                if isinstance(b_out, str):
+                    filter_end = datetime.strptime(b_out, '%Y-%m-%d').replace(hour=23, minute=59, second=59)
+                elif isinstance(b_out, datetime):
+                    filter_end = b_out.replace(hour=23, minute=59, second=59)
+                elif isinstance(b_out, date):
+                    filter_end = datetime.combine(b_out, datetime.max.time().replace(microsecond=0))
         except Exception as e:
             print(f"Error parsing booking_id for filters: {e}")
 
@@ -2526,13 +2618,8 @@ def get_location_items(
 
     # If end_date is just a date, set it to end of day
     if filter_end and (not hasattr(filter_end, 'hour') or filter_end.hour == 0):
-        # Using a simple check if it has datetime properties or just date
         if isinstance(filter_end, datetime):
             filter_end = filter_end.replace(hour=23, minute=59, second=59)
-    
-    location = db.query(Location).filter(Location.id == location_id, (Location.branch_id == branch_id if branch_id is not None else True)).first()
-    if not location:
-        raise HTTPException(status_code=404, detail="Location not found in this branch")
 
     
     # 1. Get items from LocationStock (Primary Source for bulk items)
@@ -2598,51 +2685,67 @@ def get_location_items(
             except: pass
 
             if w_id:
-                from sqlalchemy import or_
-                # Filter to records for this booking or untagged records
-                issue_query = issue_query.filter(
-                    or_(
-                        StockIssue.booking_id == w_id,
-                        StockIssue.booking_id.is_(None)
+                from sqlalchemy import or_, and_
+                date_conditions = []
+                if filter_start:
+                    date_conditions.append(StockIssue.issue_date >= filter_start)
+                if filter_end:
+                    date_conditions.append(StockIssue.issue_date <= filter_end)
+                
+                if date_conditions:
+                    issue_query = issue_query.filter(
+                        or_(
+                            StockIssue.booking_id == w_id,
+                            and_(
+                                StockIssue.booking_id.is_(None),
+                                *date_conditions
+                            )
+                        )
                     )
-                )
-            
-            if filter_start:
-                issue_query = issue_query.filter(StockIssue.issue_date >= filter_start)
-            if filter_end:
-                issue_query = issue_query.filter(StockIssue.issue_date <= filter_end)
+                else:
+                    issue_query = issue_query.filter(
+                        or_(
+                            StockIssue.booking_id == w_id,
+                            StockIssue.booking_id.is_(None)
+                        )
+                    )
+            else:
+                if filter_start:
+                    issue_query = issue_query.filter(StockIssue.issue_date >= filter_start)
+                if filter_end:
+                    issue_query = issue_query.filter(StockIssue.issue_date <= filter_end)
                 
             issue_details_all = issue_query.order_by(StockIssue.issue_date.desc()).all()
 
             # Post-filter: If we have a booking context, exclude records that explicitly belong to OTHER bookings (in notes)
             if w_id:
-                # Include new branch-scoped format and old format patterns
                 display_id_patterns = [
-                    format_display_id(w_id, branch_id=branch_id, is_package=False),
-                    format_display_id(w_id, branch_id=branch_id, is_package=True),
-                    f"BK-{str(w_id).zfill(6)}", 
-                    f"PK-{str(w_id).zfill(6)}", 
+                    format_display_id(w_id, branch_id=branch_id, is_package=is_package_booking),
+                    f"{'PK' if is_package_booking else 'BK'}-{str(w_id).zfill(6)}", 
                     f"#{w_id}"
                 ]
                 issue_details = []
                 for d in issue_details_all:
+                    notes = (d.issue.notes or "").upper()
+                    # Prevent ID collisions between Booking and PackageBooking with identical numeric IDs
+                    if is_package_booking and "BK-" in notes:
+                        continue
+                    if (not is_package_booking) and "PK-" in notes:
+                        continue
+
                     if d.issue.booking_id == w_id:
                         issue_details.append(d)
                         continue
                     
                     # If untagged, check notes for mention of other guests/bookings
-                    notes = (d.issue.notes or "").upper()
                     has_any_bk = "BK-" in notes or "PK-" in notes or "BOOKING " in notes or "FOR BK" in notes
                     if has_any_bk:
-                        # Only keep if it mentions OUR booking
                         matches_ours = any(p.upper() in notes for p in display_id_patterns)
                         if matches_ours:
                             issue_details.append(d)
                         else:
-                            # Mentions a different booking, exclude from this guest's view
                             continue
                     else:
-                        # No specific booking mentioned, assume it's preparation stock or general room issue
                         issue_details.append(d)
             else:
                 issue_details = issue_details_all
@@ -2687,7 +2790,7 @@ def get_location_items(
                     return
 
                 # Group issues by price point for rentals/payable items
-                price_groups = {} # price -> {qty: float, is_payable: bool}
+                price_groups = {} # price -> {qty: float, is_payable: bool, is_paid: bool, issue_detail_id: int, issue_id: int}
                 
                 rem = qty
                 for detail in issues:
@@ -2703,7 +2806,13 @@ def get_location_items(
                     group_key = (price, is_pay) if is_pay else (0.0, False)
                     
                     if group_key not in price_groups:
-                        price_groups[group_key] = {"qty": 0.0, "is_payable": is_pay}
+                        price_groups[group_key] = {
+                            "qty": 0.0,
+                            "is_payable": is_pay,
+                            "is_paid": getattr(detail, "is_paid", False),
+                            "issue_detail_id": detail.id,
+                            "issue_id": detail.issue_id
+                        }
                     
                     price_groups[group_key]["qty"] += attributed
                     rem -= attributed
@@ -2712,7 +2821,13 @@ def get_location_items(
                 if rem > 0:
                     group_key = (0.0, False)
                     if group_key not in price_groups:
-                        price_groups[group_key] = {"qty": 0.0, "is_payable": False}
+                        price_groups[group_key] = {
+                            "qty": 0.0,
+                            "is_payable": False,
+                            "is_paid": False,
+                            "issue_detail_id": None,
+                            "issue_id": None
+                        }
                     price_groups[group_key]["qty"] += rem
 
                 for (price, is_pay), group_data in price_groups.items():
@@ -2760,7 +2875,11 @@ def get_location_items(
                         "last_updated": stock.last_updated,
                         "type": "asset" if is_asset else "consumable",
                         "is_rentable": is_rent_split,
-                        "is_asset_fixed": item.is_asset_fixed
+                        "is_asset_fixed": item.is_asset_fixed,
+                        "is_payable": is_pay,
+                        "is_paid": group_data.get("is_paid", False),
+                        "issue_detail_id": group_data.get("issue_detail_id"),
+                        "issue_id": group_data.get("issue_id")
                     }
 
             # Determine if item is an asset
